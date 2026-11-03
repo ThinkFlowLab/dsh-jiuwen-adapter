@@ -5,9 +5,9 @@
 <p align="center"><b>Use JiuwenSwarm as the brain of dsh, with your other dsh plugins still working.</b></p>
 
 <p align="center">
-  <a href="https://github.com/hsliuustc0106/dsh-jiuwen-adapter/actions/workflows/ci.yml"><img src="https://github.com/hsliuustc0106/dsh-jiuwen-adapter/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/ThinkFlowLab/dsh-jiuwen-adapter/actions/workflows/ci.yml"><img src="https://github.com/ThinkFlowLab/dsh-jiuwen-adapter/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="./docs/testing.md"><img src="https://img.shields.io/badge/tests-guarded-22c55e" alt="tests guarded"></a>
-  <img src="https://img.shields.io/github/package-json/v/hsliuustc0106/dsh-jiuwen-adapter?label=version" alt="version">
+  <img src="https://img.shields.io/github/package-json/v/ThinkFlowLab/dsh-jiuwen-adapter?label=version" alt="version">
   <img src="https://img.shields.io/badge/dsh-%3E%3D0.2.1--rc.2%20%3C0.3.0-6366f1" alt="dsh range">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="license"></a>
 </p>
@@ -32,7 +32,7 @@ flowchart LR
 uv pip install workswarm && jiuwenswarm-init && jiuwenswarm-start app
 
 # 2. Plugin: install into a dsh profile (dsh >= 0.2.1-rc.2: npm i -g @deepseek-ai/dsh@next)
-dsh plugin --profile web add "git+https://github.com/hsliuustc0106/dsh-jiuwen-adapter.git"
+dsh plugin --profile web add "git+https://github.com/ThinkFlowLab/dsh-jiuwen-adapter.git"
 
 # 3. Make it the default model, then chat
 printf -- '- id: agent-default-model\n  config:\n    provider: jiuwen\n    model: jiuwen-default\n' >> ~/.dsh/profiles/web/cordis.patch.yml
