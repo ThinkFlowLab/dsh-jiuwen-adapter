@@ -29,6 +29,19 @@ function jwId(sessions, sid) {
 export function createAgentCoreFacade(deps) {
   const { sessions, getConfig, getAgentcore, state, getHostServices, logger } = deps
   const soft = (label, err) => logger?.debug?.(`[dsh-jiuwen] agentcore-facade ${label}: ${String(err?.message || err).slice(0, 200)}`)
+  /** Gateway-required surface. Sets gatewayFallback only when user opted in. */
+  const gatewayRequired = (extra = {}) => {
+    const optIn = (getConfig?.() || {}).gatewayFallback === true
+    const base = {
+      ok: false,
+      unavailable: true,
+      reason: 'gateway-required',
+      note: extra.note || 'requires Jiuwen Gateway (set gatewayFallback: true and gatewayURL, or backend: gateway)',
+      ...extra,
+    }
+    if (optIn) base.gatewayFallback = true
+    return base
+  }
 
   const modelsFromConfig = () => {
     const c = getConfig()
@@ -361,7 +374,7 @@ export function createAgentCoreFacade(deps) {
         { name: 'handoff', source: 'openjiuwen.core.multi_agent.teams.handoff' },
         { name: 'hierarchical_tools', source: 'openjiuwen.core.multi_agent.teams.hierarchical_tools' },
       ]
-      return { templates: builtIn, note: 'templates listable on agent-core; execute swarm via gatewayFallback' }
+      return { templates: builtIn, note: 'templates listable on agent-core; execute requires Gateway unless gatewayFallback: true' }
     },
     async teamList() {
       // Prefer agent-core/adapter registry (dsh already surfaces teams via state).
@@ -410,33 +423,52 @@ export function createAgentCoreFacade(deps) {
       if (action === 'get' || action === 'get_workflow') {
         const id = extra?.workflow_id || extra?.id
         const hit = (stored.workflows || []).find(w => String(w.id || w.workflow_id) === String(id))
-        if (hit) return { workflow: hit }
-        return { workflow: null, gatewayFallback: true, note: 'swarm workflow get requires Gateway agentserver' }
+        if (hit) return { ok: true, workflow: hit }
+        return gatewayRequired({
+          workflow: null,
+          note: 'swarm workflow get requires Gateway agentserver',
+        })
+      }
+      if (action === 'run' || action === 'execute' || action === 'start') {
+        return gatewayRequired({
+          workflows: stored.workflows || [],
+          note: 'swarm workflow execute requires Gateway agentserver',
+        })
       }
       return {
+        ok: true,
         workflows: stored.workflows || [],
         note: (stored.workflows || []).length
           ? 'adapter-side workflow registry'
-          : 'agent-core: swarm workflow runtime needs Gateway; auto-routes when gatewayFallback enabled',
-        gatewayFallback: true,
+          : 'agent-core: no local workflows; execute/install needs Gateway (gatewayFallback: true to auto-route)',
       }
     },
     async skillsMarketplaceList() {
       const stored = state.listMarketplaces?.() || { marketplaces: [] }
-      return {
-        marketplaces: stored.marketplaces || [],
-        note: 'hub marketplace install is Gateway-only; listing may auto-route',
-        gatewayFallback: true,
+      if ((stored.marketplaces || []).length) {
+        return { ok: true, marketplaces: stored.marketplaces, note: 'adapter-side marketplace registry' }
       }
+      return gatewayRequired({
+        marketplaces: [],
+        note: 'hub marketplace listing/install requires Gateway',
+      })
     },
     async skillsGet(name) {
       const list = await api.skillsList()
       const hit = (list.skills || []).find(s => s.name === name)
-      if (hit) return hit
-      return { name, gatewayFallback: true, note: 'skill metadata beyond host list needs Gateway hub' }
+      if (hit) return { ok: true, ...hit }
+      return gatewayRequired({
+        name,
+        note: 'skill metadata beyond host list needs Gateway hub',
+      })
     },
     async skillsVersionsList(name) {
-      return { versions: [], default_version: null, name, gatewayFallback: true }
+      return gatewayRequired({
+        versions: [],
+        default_version: null,
+        name,
+        note: 'skill versions require Gateway hub',
+      })
     },
     async rpc(method, params = {}) {
       const m = String(method)
@@ -510,7 +542,8 @@ export function createAgentCoreFacade(deps) {
 async function maybeGatewayFallback(target, prop, args, result, getConfig) {
   if (!result || result.gatewayFallback !== true) return result
   const cfg = getConfig() || {}
-  if (cfg.gatewayFallback === false) return result
+  // Opt-in only (agent-core-only default). Explicit gatewayFallback: true required.
+  if (cfg.gatewayFallback !== true) return result
   if (!cfg.gatewayURL) return result
   const v = target?.[prop]
   if (typeof v !== 'function') return result
@@ -548,7 +581,7 @@ export function bindAgentCoreFacade(baseGatewayApi, facade, getConfig) {
           } catch (e) {
             if (e?.code !== 'UNSUPPORTED') throw e
             // Auto-route unknown RPCs to Gateway when available.
-            if ((getConfig() || {}).gatewayFallback === false) throw e
+            if ((getConfig() || {}).gatewayFallback !== true) throw e
             const baseRpc = Reflect.get(target, 'rpc', receiver)
             if (typeof baseRpc !== 'function') throw e
             try {
@@ -579,7 +612,7 @@ export function bindAgentCoreFacade(baseGatewayApi, facade, getConfig) {
         if (!isAgentCoreBackend(getConfig())) {
           return baseVal.apply(target, args)
         }
-        if ((getConfig() || {}).gatewayFallback !== false) {
+        if ((getConfig() || {}).gatewayFallback === true) {
           try {
             const routed = await baseVal.apply(target, args)
             return { ...(routed && typeof routed === 'object' ? routed : { value: routed }), routedVia: 'gateway' }

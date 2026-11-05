@@ -106,6 +106,12 @@ export function resolveConfig(raw = {}, opts = {}) {
     mode,
     /** agent-core (default) | gateway — which product backend mode=gateway uses. */
     backend,
+    /**
+     * When backend=agent-core: auto-route marked RPCs to Gateway if reachable.
+     * Default false (agent-core-only). Opt in with gatewayFallback: true or
+     * JIUWEN_GATEWAY_FALLBACK=1 when a Gateway is available.
+     */
+    gatewayFallback: env.JIUWEN_GATEWAY_FALLBACK === '1' || raw.gatewayFallback === true,
     brainOwnership: 'jiuwen',
     baseURL: stripTrailingSlash(String(
       env.JIUWEN_BASE_URL

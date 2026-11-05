@@ -9,7 +9,11 @@ import { createAgentCoreFacade, bindAgentCoreFacade } from '../src/agentcore-fac
 import { resolveConfig } from '../src/config.js'
 
 test('resolveConfig default backend is agent-core', () => {
-  assert.equal(resolveConfig({}, { env: {} }).backend, 'agent-core')
+  const c = resolveConfig({}, { env: {} })
+  assert.equal(c.backend, 'agent-core')
+  assert.equal(c.gatewayFallback, false)
+  assert.equal(resolveConfig({ gatewayFallback: true }, { env: {} }).gatewayFallback, true)
+  assert.equal(resolveConfig({}, { env: { JIUWEN_GATEWAY_FALLBACK: '1' } }).gatewayFallback, true)
 })
 
 test('agentcore-state heartbeat/permissions/plugins/skills round-trip', () => {
@@ -183,11 +187,12 @@ test('facade covers remaining session/list/create/archive/memory/plugins/misc RP
   assert.ok((await facade.sessionAssetsList()).assets)
   assert.ok(Array.isArray((await facade.memoryStatus('d2')).providers))
   assert.ok(Array.isArray((await facade.skillsMarketplaceList()).marketplaces))
+  assert.equal((await facade.skillsMarketplaceList()).unavailable, true)
   // team list stays on agent-core/adapter registry (no gatewayFallback)
   assert.equal((await facade.teamList()).gatewayFallback, undefined)
   assert.ok(Array.isArray((await facade.agentsList()).agents))
 
-  // gateway auto-route when facade marks gatewayFallback (hub still routes)
+  // Default agent-core-only: hub is unavailable (no auto-route without opt-in)
   {
     let routed = false
     const baseGw = {
@@ -200,9 +205,9 @@ test('facade covers remaining session/list/create/archive/memory/plugins/misc RP
     assert.equal(routed, false, 'teamList must not auto-route')
     assert.ok(Array.isArray(tl.teams))
     const hub = await bound.skillsMarketplaceList()
-    assert.equal(routed, true)
-    assert.equal(hub.routedVia, 'gateway')
-    assert.equal(hub.marketplaces[0].name, 'hub')
+    assert.equal(routed, false, 'hub must not auto-route by default')
+    assert.equal(hub.unavailable, true)
+    assert.equal(hub.reason, 'gateway-required')
   }
 
   // rpc coverage for remaining methods
@@ -307,9 +312,12 @@ test('bindAgentCoreFacade rpc auto-route + missing method + session delete/switc
   await facade.sessionDelete('a')
   assert.equal(deleted, 'ja')
   assert.ok(!(sessions.get('a')))
-  assert.equal((await facade.skillsGet('nope')).gatewayFallback, true)
+  assert.equal((await facade.skillsGet('nope')).unavailable, true)
+  assert.equal((await facade.skillsGet('nope')).reason, 'gateway-required')
+  assert.equal((await facade.skillsGet('nope')).gatewayFallback, undefined)
   assert.ok(Array.isArray((await facade.skillsVersionsList('x')).versions))
-  assert.equal((await facade.workflows(null, 'get', { id: 'missing' })).gatewayFallback, true)
+  assert.equal((await facade.workflows(null, 'get', { id: 'missing' })).unavailable, true)
+  assert.equal((await facade.workflows(null, 'get', { id: 'missing' })).gatewayFallback, undefined)
 
   const base = {
     rpc: async (m) => ({ method: m, from: 'gw' }),
@@ -330,5 +338,75 @@ test('bindAgentCoreFacade rpc auto-route + missing method + session delete/switc
   const boundGw = bindAgentCoreFacade(base, facade, () => ({ backend: 'gateway' }))
   assert.deepEqual(boundGw.unsupported(), ['x'])
   assert.deepEqual(await boundGw.rpc('z', {}), { method: 'z', from: 'gw' })
+  rmSync(dir, { recursive: true, force: true })
+})
+
+
+test('agent-core-only: unavailable without gatewayFallback opt-in', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ac-facade-aconly-'))
+  const sessions = new SessionStore(join(dir, 'map.json'))
+  const state = createAgentCoreState(join(dir, 'state.json'))
+  const facade = createAgentCoreFacade({
+    sessions,
+    getConfig: () => ({ backend: 'agent-core', projectDir: dir, gatewayURL: 'ws://127.0.0.1:19000/ws' }),
+    getAgentcore: () => ({
+      sessionHistory: async () => ({ messages: [] }),
+      sessionDelete: async () => ({ ok: true }),
+      sessionFork: async () => ({ session_id: 'f' }),
+      cancel: async () => ({ ok: true }),
+    }),
+    state,
+  })
+  const miss = await facade.skillsGet('no-such-skill')
+  assert.equal(miss.unavailable, true)
+  assert.equal(miss.reason, 'gateway-required')
+  assert.equal(miss.gatewayFallback, undefined)
+
+  const hub = await facade.skillsMarketplaceList()
+  assert.equal(hub.unavailable, true)
+  assert.deepEqual(hub.marketplaces, [])
+
+  const ver = await facade.skillsVersionsList('x')
+  assert.equal(ver.unavailable, true)
+
+  const wfRun = await facade.workflows(null, 'execute', { id: 'x' })
+  assert.equal(wfRun.unavailable, true)
+
+  const agents = await facade.agentsList()
+  assert.ok(Array.isArray(agents.agents))
+  assert.ok((await facade.teamList()).teams)
+
+  // Opt-in re-enables gatewayFallback marker + auto-route
+  const facadeOpt = createAgentCoreFacade({
+    sessions,
+    getConfig: () => ({ backend: 'agent-core', projectDir: dir, gatewayURL: 'ws://127.0.0.1:19000/ws', gatewayFallback: true }),
+    getAgentcore: () => ({
+      sessionHistory: async () => ({ messages: [] }),
+      sessionDelete: async () => ({ ok: true }),
+      sessionFork: async () => ({ session_id: 'f' }),
+      cancel: async () => ({ ok: true }),
+    }),
+    state,
+  })
+  assert.equal((await facadeOpt.skillsGet('nope')).gatewayFallback, true)
+
+  let routed = false
+  const bound = bindAgentCoreFacade({
+    skillsMarketplaceList: async () => { routed = true; return { marketplaces: [{ name: 'hub' }] } },
+    rpc: async () => ({}),
+  }, facadeOpt, () => ({ backend: 'agent-core', gatewayURL: 'ws://127.0.0.1:19000/ws', gatewayFallback: true }))
+  const hub2 = await bound.skillsMarketplaceList()
+  assert.equal(routed, true)
+  assert.equal(hub2.routedVia, 'gateway')
+
+  // Without opt-in, bind must NOT route even if base has the method
+  routed = false
+  const boundOff = bindAgentCoreFacade({
+    skillsMarketplaceList: async () => { routed = true; return { marketplaces: [{ name: 'hub' }] } },
+  }, facade, () => ({ backend: 'agent-core', gatewayURL: 'ws://127.0.0.1:19000/ws' }))
+  const hub3 = await boundOff.skillsMarketplaceList()
+  assert.equal(routed, false)
+  assert.equal(hub3.unavailable, true)
+
   rmSync(dir, { recursive: true, force: true })
 })

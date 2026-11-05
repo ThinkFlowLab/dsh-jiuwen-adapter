@@ -603,7 +603,7 @@ ${jobs.slice(0, 15).map(j => `- ${j.id || j.job_id || j.name || JSON.stringify(j
             // Soft-fail: a Gateway build without this method is not an error of the host.
             const m = error?.method || (msg.match(/unknown method:?\s*([\w.]+)/i) || [])[1] || 'this method'
             if (error?.backend === 'agent-core' || /agent-core backend/i.test(msg)) {
-              return { kind: 'success', text: `Jiuwen: not available on agent-core — ${m} needs the Gateway backend (set backend: gateway).` }
+              return { kind: 'success', text: `Jiuwen: unavailable on agent-core — ${m} requires Gateway (set gatewayFallback: true + gatewayURL, or backend: gateway).` }
             }
             return { kind: 'success', text: `Jiuwen: not available on this Gateway — ${m} is not routed on /ws (feature-detected; hidden from help).` }
           }

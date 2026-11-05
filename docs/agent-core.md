@@ -172,10 +172,53 @@ Existing `session-map.json` entries keep their `jiuwenSessionId`. On first agent
 
 | Item | agent-core status | Why not full parity | Fallback |
 |---|---|---|---|
-| Swarm workflow **execution** / team graph runtime | List/registry in `agentcore-state`; openjiuwen `multi_agent` templates enumerated | Graph runner lives in Gateway agentserver, not in the sidecar `LocalFunction` agent loop — would need embedding agentserver or rewriting dsh swarm UX on TeamRuntime | Auto-route RPC/API to Gateway when `gatewayURL` is up (`gatewayFallback`, default on). Or `backend: gateway` for those turns |
+| Swarm workflow **execution** / team graph runtime | List/registry in `agentcore-state`; openjiuwen `multi_agent` templates enumerated | Graph runner lives in Gateway agentserver, not in the sidecar `LocalFunction` agent loop — would need embedding agentserver or rewriting dsh swarm UX on TeamRuntime | Returns `{ unavailable:true, reason:'gateway-required' }` by default. Opt in with `gatewayFallback: true` + reachable `gatewayURL`, or `backend: gateway` |
 | Hub skill **marketplace install** | `skillsMarketplaceList` + state registry; install still Gateway | Remote hub APIs are Gateway product endpoints | Auto-route list/install to Gateway; otherwise use host dsh skills (bodies injected) |
 | Session assets browser | **Implemented**: lists sidecar checkpoint + `projectDir` files | Not the Gateway FS index / web UI browser | Host file tools; local listing is enough for agent use |
 | External mem0 / lakebase memory | Status reports provider availability from env; openjiuwen ships providers | Needs live mem0/lakebase service + credentials; Gateway wires them into agentserver | Set `MEM0_*` / `LAKEBASE_*` / `OPENJIUWEN_MEMORY_ENABLED`, or use host memory plugins (`dsh-agent-instructions`, `dsh-session-reference`, `dsh-experimental-session-search`) |
+
+
+## Agent-core-only mode (no Gateway)
+
+Default product path: `backend: agent-core` and **`gatewayFallback: false`**.
+
+Plain chat, tools (LocalFunction → `ctx.tools.execute`), sessions, fork/delete/history,
+compact, permissions/auto-review (host), skills list (host), goal, plan status, heartbeat
+config, memory status, and `/jiuwen` surfaces that the facade implements locally all work
+**without** a running Gateway (`:19000` may be down).
+
+### Opt back into Gateway auto-route
+
+```yaml
+# dsh profile / adapter config
+backend: agent-core
+gatewayFallback: true   # or env JIUWEN_GATEWAY_FALLBACK=1
+gatewayURL: ws://127.0.0.1:19000/ws
+```
+
+Only methods that still mark `gatewayFallback: true` (when opted in) will auto-route —
+hub marketplace, skill versions, swarm workflow get/execute, and unknown RPCs.
+
+### Surfaces that return unavailable without Gateway
+
+| Feature | Without Gateway | Opt-in gatewayFallback |
+|---|---|---|
+| workflow list (local registry) | empty local list `ok:true` | same |
+| workflow get/execute (missing/run) | `unavailable` + `reason: gateway-required` | auto-route if Gateway up |
+| skills marketplace (empty) | `unavailable` | auto-route |
+| skillsGet miss / versions | `unavailable` | auto-route |
+| team list / agents list | local adapter registry | local only (no auto-route) |
+| swarm graph execute | `unavailable` | auto-route / `backend: gateway` |
+
+Agent-core-only extras with **no dsh equivalent** (medical_kb, RSI, MoA, web_research_rail, …)
+remain unwired.
+
+### Out of scope (not a dsh surface)
+
+Hub marketplace install/versions, swarm workflow **execute**, and other Gateway-only
+product surfaces that dsh does not expose are **ignored** in agent-core-only mode —
+documented as out-of-scope, not implemented as adapter substitutes. Related RPCs return
+`{ unavailable:true, reason:'gateway-required' }` so callers fail closed without hanging.
 
 
 ## Reasoning / thinking (follow-up)
@@ -261,7 +304,7 @@ Status legend: **native** = openjiuwen/sidecar; **adapter** = session map / `age
 |---|---|
 | `backend` / `JIUWEN_BACKEND` (default `agent-core`) | native switch |
 | `agentcorePython` / `agentcoreCheckpointDir` | native |
-| `gatewayFallback` (default on) | fallback router |
+| `gatewayFallback` (default **off**) | opt-in Gateway auto-route |
 | `forwardReasoning` / `emitUsage` / `eventDisplay` | native stream map |
 | `hostSync` + `sync*` flags | adapter (same flags as Gateway) |
 | `gatewayURL` | required for fallback; optional for pure agent-core |
