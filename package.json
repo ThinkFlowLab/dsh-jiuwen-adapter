@@ -49,7 +49,11 @@
     "LICENSE",
     "docs/",
     "ARCHITECTURE.md",
-    "VERIFICATION.md"
+    "VERIFICATION.md",
+    "sidecar/",
+    "scripts/setup-sidecar",
+    "pytest-sidecar.ini",
+    "docs/agent-core.md"
   ],
   "scripts": {
     "test": "node --test test/*.test.js",
@@ -69,7 +73,9 @@
     "market:index": "node scripts/market-index.mjs",
     "test:live": "node test/live/run.mjs",
     "test:plain-dsh": "node test/live/plain-dsh.mjs",
-    "guard:live": "bash scripts/guard-live.sh"
+    "guard:live": "bash scripts/guard-live.sh",
+    "sidecar:setup": "bash scripts/setup-sidecar",
+    "test:sidecar": "bash scripts/setup-sidecar && AGENTCORE_FAKE_MODEL=1 .venv-sidecar/bin/python -m pytest -c pytest-sidecar.ini --cov=sidecar --cov-config=.coveragerc --cov-report=term-missing --cov-report=xml:sidecar/coverage.xml --cov-fail-under=90 -q"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.5",

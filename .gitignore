@@ -24,3 +24,13 @@ examples/live-gateway/
 examples/
 !bench/data/*.jsonl
 reports/
+
+# agent-core sidecar
+.venv-sidecar/
+__pycache__/
+*.pyc
+.pytest_cache/
+sidecar/.pytest_cache/
+sidecar/coverage.xml
+.coverage
+htmlcov/
