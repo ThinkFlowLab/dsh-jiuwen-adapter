@@ -103,7 +103,17 @@ function runPrompt(ctx, prompt, { sessionId, timeoutMs = 90_000 } = {}) {
       clearTimeout(kill); clearTimeout(grace)
       try { process.kill(-p.pid, 'SIGTERM') } catch {}
       setTimeout(() => { try { process.kill(-p.pid, 'SIGKILL') } catch {}; try { p.kill('SIGKILL') } catch {} }, 1500)
-      resolve({ text, wallMs: performance.now() - t0, err: err.slice(-600), code, sessionId: sawSession, toolCalls })
+      let traceCalls = 0
+      try {
+        if (existsSync(trace)) {
+          for (const line of readFileSync(trace, 'utf8').split('\n')) {
+            if (!line.trim()) continue
+            let e; try { e = JSON.parse(line) } catch { continue }
+            if (e.type === 'tool_call' || (e.at === 'event' && e.type === 'tool_call')) traceCalls++
+          }
+        }
+      } catch {}
+      resolve({ text, wallMs: performance.now() - t0, err: err.slice(-600), code, sessionId: sawSession, toolCalls: Math.max(toolCalls, traceCalls) })
     }
     const kill = setTimeout(() => finish(124), timeoutMs)
     let grace = null
