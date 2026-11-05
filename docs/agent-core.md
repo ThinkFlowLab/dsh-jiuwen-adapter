@@ -116,3 +116,28 @@ npm run test:sidecar     # Python sidecar suite
 Intentional gaps: spawn `error` / failed-ping kill paths, stdin write/drain races,
 RPC timer edge, `safeArgs` JSON throw, and a few payload-field fallbacks in
 `extractText` / `extractReasoning` (defensive).
+
+
+## HostSync parity
+
+Frontend-changeable settings that apply in jiuwen sessions (see [host-sync.md](./host-sync.md)) on agent-core:
+
+| Setting | Effect |
+|---|---|
+| Model switch | `set_llm` on the cached DeepAgent each turn |
+| System prompt | Host `system` with `prompt_mode=none` (no DeepAgent identity/skills/memory sections stacked) |
+| Tools add/remove | LocalFunction ability sync each turn (`ability_manager`) |
+| Reasoning / thinking | Forwarded when `forwardReasoning` is on (sidecar `reasoning` events) |
+| Temperature / max_tokens / top_p | ModelRequestConfig fields on `turn.start` |
+| Plan mode | `enable_plan_mode` + `default_mode=plan` when chatMode is `agent.plan` |
+| Delete / fork / pause | Sidecar RPCs |
+
+### Not feasible (clear degrade)
+
+| Area | Why |
+|---|---|
+| MCP passthrough (`toolPassthrough: mcp`) | agent-core uses LocalFunction → `ctx.tools.execute`; MCP bridge is skipped |
+| Gateway skills.* / permissions.* / heartbeat / goal / memory.* / plugins.* | No Gateway; `/jiuwen` and `ctx.jiuwenAdapter.gateway.*` throw `UNSUPPORTED` with `backend: agent-core` |
+| session.rename / pin / archive / switch | No sidecar equivalent; title stays on the dsh mapping only |
+
+`ctx.jiuwenAdapter.gateway.supports(method)` returns true only for history/session delete|fork|interrupt|models.list on agent-core. Default backend remains **gateway** until you set `backend: agent-core` or `JIUWEN_BACKEND=agent-core`.

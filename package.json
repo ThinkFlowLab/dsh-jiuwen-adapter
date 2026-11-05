@@ -76,7 +76,7 @@
     "guard:live": "bash scripts/guard-live.sh",
     "sidecar:setup": "bash scripts/setup-sidecar",
     "test:sidecar": "bash scripts/setup-sidecar && AGENTCORE_FAKE_MODEL=1 .venv-sidecar/bin/python -m pytest -c pytest-sidecar.ini --cov=sidecar --cov-config=.coveragerc --cov-report=term-missing --cov-report=xml:sidecar/coverage.xml --cov-fail-under=90 -q",
-    "test:agentcore": "node --test --experimental-test-coverage --test-coverage-include=src/agentcore-transport.js --test-coverage-lines=90 test/agentcore-transport.test.js test/agentcore-sidecar-integration.test.js"
+    "test:agentcore": "node --test --experimental-test-coverage --test-coverage-include=src/agentcore-transport.js --test-coverage-include=src/agentcore-api.js --test-coverage-lines=90 test/agentcore-transport.test.js test/agentcore-sidecar-integration.test.js test/agentcore-api.test.js"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.5",

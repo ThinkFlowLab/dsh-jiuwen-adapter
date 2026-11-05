@@ -428,3 +428,81 @@ async def test_turn_cancel_await_exception(ckpt_dir, writer, fake):
         assert r["result"]["ok"] is True
     finally:
         await h.stop()
+
+
+def test_build_model_temperature_limits(monkeypatch):
+    monkeypatch.delenv("AGENTCORE_FAKE_MODEL", raising=False)
+    m = build_model({
+        "provider": "fake",
+        "model": "m",
+        "temperature": 0.3,
+        "max_tokens": 64,
+        "top_p": 0.8,
+        "api_key": "sk-test",
+    })
+    assert m.model_config.temperature == 0.3
+    assert m.model_config.max_tokens == 64
+    assert m.model_config.top_p == 0.8
+    # bad values are ignored
+    m2 = build_model({
+        "provider": "fake",
+        "model": "m",
+        "temperature": "nope",
+        "max_tokens": "x",
+        "top_p": object(),
+        "api_key": "sk-test",
+    })
+    assert m2 is not None
+
+
+@pytest.mark.asyncio
+async def test_prompt_mode_none_when_system_provided(ckpt_dir, writer, fake, monkeypatch):
+    """Host system prompt → prompt_mode=none so DeepAgent identity sections do not stack."""
+    monkeypatch.delenv("AGENTCORE_PROMPT_MODE", raising=False)
+    fake.reset_script([AssistantMessage(content="ok")])
+    h = RpcHarness(ckpt_dir, writer)
+    await h.start()
+    try:
+        await h.call(
+            "turn.start",
+            {
+                "sid": "pm1",
+                "query": "hi",
+                "tools": [],
+                "model": {"provider": "fake", "model": "m", "api_key": "sk"},
+                "system": "HOST SYSTEM ONLY",
+            },
+        )
+        # Reach into SessionManager via server
+        agent = h.mgr._agents["pm1"]
+        cfg = getattr(agent, "_deep_config", None)
+        assert cfg is not None
+        assert cfg.prompt_mode == "none"
+        assert "HOST SYSTEM ONLY" in (cfg.system_prompt or "")
+    finally:
+        await h.stop()
+
+
+@pytest.mark.asyncio
+async def test_plan_flag_enables_plan_mode(ckpt_dir, writer, fake):
+    fake.reset_script([AssistantMessage(content="plan")])
+    h = RpcHarness(ckpt_dir, writer)
+    await h.start()
+    try:
+        await h.call(
+            "turn.start",
+            {
+                "sid": "plan1",
+                "query": "plan this",
+                "tools": [],
+                "model": {"provider": "fake", "model": "m", "api_key": "sk"},
+                "system": "sys",
+                "plan": True,
+            },
+        )
+        agent = h.mgr._agents["plan1"]
+        cfg = getattr(agent, "_deep_config", None)
+        assert cfg is not None
+        assert cfg.enable_plan_mode is True
+    finally:
+        await h.stop()

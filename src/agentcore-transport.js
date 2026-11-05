@@ -534,12 +534,19 @@ export function buildModelSpec(options = {}, overrides = {}) {
   if (process.env.AGENTCORE_FAKE_MODEL === '1' || String(provider).toLowerCase() === 'fake') {
     return { provider: 'fake', api_base: apiBase, api_key_env: apiKeyEnv, model: String(modelName) }
   }
-  return {
+  const spec = {
     provider: String(provider),
     api_base: String(apiBase),
     api_key_env: String(apiKeyEnv),
     model: String(modelName),
   }
+  const temp = overrides.temperature ?? options.temperature
+  const maxTok = overrides.max_tokens ?? overrides.maxTokens ?? options.maxTokens
+  const topP = overrides.top_p ?? overrides.topP ?? options.topP
+  if (temp != null) spec.temperature = temp
+  if (maxTok != null) spec.max_tokens = maxTok
+  if (topP != null) spec.top_p = topP
+  return spec
 }
 
 export function extractImageUrls(options) {

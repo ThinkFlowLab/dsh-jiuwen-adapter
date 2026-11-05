@@ -104,6 +104,22 @@ def build_model(model_spec: dict) -> Model:
     }
     client_provider = provider_map.get(str(provider).lower(), provider)
 
+    req_kwargs = {"model_name": model_name}
+    if model_spec.get("temperature") is not None:
+        try:
+            req_kwargs["temperature"] = float(model_spec["temperature"])
+        except (TypeError, ValueError):
+            pass
+    if model_spec.get("max_tokens") is not None:
+        try:
+            req_kwargs["max_tokens"] = int(model_spec["max_tokens"])
+        except (TypeError, ValueError):
+            pass
+    if model_spec.get("top_p") is not None:
+        try:
+            req_kwargs["top_p"] = float(model_spec["top_p"])
+        except (TypeError, ValueError):
+            pass
     return Model(
         model_client_config=ModelClientConfig(
             client_provider=client_provider,
@@ -111,7 +127,7 @@ def build_model(model_spec: dict) -> Model:
             api_base=api_base,
             verify_ssl=False,
         ),
-        model_config=ModelRequestConfig(model_name=model_name),
+        model_config=ModelRequestConfig(**req_kwargs),
     )
 
 
@@ -270,10 +286,27 @@ class SessionManager:
                 agent.react_agent.set_llm(model)
             except Exception:
                 logger.exception("set_llm failed sid=%s", sid)
+            if system:
+                try:
+                    # Hot-reload identity section from host system prompt.
+                    import dataclasses
+                    cfg = getattr(agent, "_deep_config", None)
+                    if cfg is not None and hasattr(agent, "configure"):
+                        agent.configure(dataclasses.replace(cfg, system_prompt=system))
+                    elif hasattr(agent, "_hot_reload_system_prompt") and cfg is not None:
+                        cfg.system_prompt = system
+                        agent._hot_reload_system_prompt(cfg)
+                except Exception:
+                    logger.exception("system prompt reload failed sid=%s", sid)
             self._sync_tools(agent, sid, tool_specs)
             return agent
 
         tools = [self._make_tool(sid, t) for t in tool_specs if t.get("name")]
+        # When the host supplies a system prompt, use prompt_mode=none so DeepAgent
+        # identity/skills/memory sections do not stack on top of dsh's system text.
+        prompt_mode = os.environ.get("AGENTCORE_PROMPT_MODE") or (
+            "none" if system else "minimal"
+        )
         agent = create_deep_agent(
             model,
             card=AgentCard(id=sid, name=f"dsh-{sid}"),
@@ -283,6 +316,7 @@ class SessionManager:
             workspace=ws,
             enable_security_rail=False,
             enable_model_anomaly_detection_rail=False,
+            prompt_mode=prompt_mode,
         )
         self._agents[sid] = agent
         self._tool_names[sid] = {t.card.name for t in tools}
@@ -348,6 +382,20 @@ class SessionManager:
 
         agent = self._ensure_agent(sid, model_spec, system, tools, cwd=cwd)
         await self._register_img_mutator(agent)
+        plan = params.get("plan")
+        if plan:
+            try:
+                import dataclasses
+                from openjiuwen.harness.schema.agent_mode import AgentMode
+                cfg = getattr(agent, "_deep_config", None)
+                if cfg is not None and hasattr(agent, "configure"):
+                    agent.configure(dataclasses.replace(
+                        cfg,
+                        enable_plan_mode=True,
+                        default_mode=AgentMode.PLAN,
+                    ))
+            except Exception:
+                logger.exception("enable PLAN mode failed sid=%s", sid)
         if images:
             # Accept list of data URLs / paths.
             self._pending_images[sid] = list(images)

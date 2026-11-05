@@ -196,6 +196,10 @@ export interface JiuwenAdapterConfig {
 
 export interface JiuwenAdapterService {
   readonly provider: string
+  /** Active product backend (`gateway` | `agent-core`). */
+  backend(): string
+  /** True when `backend === 'agent-core'`. */
+  isAgentCore(): boolean
   onEvent(listener: (event: JiuwenEvent) => void): () => void
   jiuwenSessionId(dshSessionId: string): string
   /** Run a `/jiuwen` sub-command (e.g. 'status', 'models', 'model <name>') for a host session. */

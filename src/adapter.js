@@ -296,7 +296,7 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
           const trace = makeTrace(cfg.traceFile)
           let mcpName = cfg.mcpServerName
           let mcpAttached = false
-          if (!aux && cfg.toolPassthrough === 'mcp' && deps.mcpBridge && options.tools?.length) {
+          if (!aux && cfg.backend !== 'agent-core' && cfg.toolPassthrough === 'mcp' && deps.mcpBridge && options.tools?.length) {
             const r = await deps.mcpBridge.prepare(options.tools, dshSessionId, { signal: options.signal })
             mcpName = r?.mcpServerName || cfg.mcpServerName
             trace({ at: 'mcp-passthrough', exposed: deps.mcpBridge.exposed?.(dshSessionId) ?? deps.mcpBridge.exposed(), mcpServerName: mcpName, error: r?.error })
@@ -382,8 +382,12 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
                   api_base: String(cfg.baseURL || 'http://127.0.0.1:9/v1'),
                   api_key_env: cfg.apiKeyEnv || 'JIUWEN_API_KEY',
                   model: overrides.modelName || options.model || cfg.defaultModel,
+                  ...(options.temperature != null ? { temperature: options.temperature } : {}),
+                  ...(options.maxTokens != null ? { max_tokens: options.maxTokens } : {}),
+                  ...(options.topP != null ? { top_p: options.topP } : {}),
                 },
-                cwd: overrides.projectDir || cfg.projectDir,
+                cwd: overrides.projectDir || cfg.projectDir || turnMapping.projectDir,
+                plan: (overrides.chatMode || turnMapping.chatMode || cfg.chatMode) === 'agent.plan' || undefined,
               })
             : this._gatewayTransport().stream(request, turnMapping, turnHooks)
           for await (const chunk of gwStream) {

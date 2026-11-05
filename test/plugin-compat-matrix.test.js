@@ -29,8 +29,8 @@ function services(agentOf) {
   }
 }
 
-function rig(order) {
-  const listeners = {}; const calls = []; let live = {}
+function rig(order, backend = 'gateway') {
+  const listeners = {}; const calls = []; const acCalls = []; let live = {}
   const ctx = { on(n, fn) { (listeners[n] ||= []).push(fn); return () => { listeners[n] = listeners[n].filter(f => f !== fn) } } }
   const sessions = new SessionStore(join(mkdtempSync(join(tmpdir(), 'pcm-')), 'm.json'))
   const agents = new Map()
@@ -43,12 +43,21 @@ function rig(order) {
     skillsList: async () => ({ skills: [] }),
     planStatus: async () => ({ in_plan: true }),
   }
+  const ac = () => ({
+    cancel: async (sid) => { acCalls.push(['cancel', sid]); return {} },
+    sessionDelete: async (sid) => { acCalls.push(['delete', sid]); return {} },
+    sessionFork: async (from, to) => { acCalls.push(['fork', from, to]); return { session_id: to } },
+  })
   if (order === 'adapter-last') live = S.svc
-  const hs = installHostSync({ ctx, config: () => ({ provider: 'jiuwen', hostSync: true, models: [{ id: 'jiuwen-default' }] }), sessions, gateway: () => g, logger: {}, services: () => live })
+  const hs = installHostSync({
+    ctx,
+    config: () => ({ provider: 'jiuwen', backend, hostSync: true, models: [{ id: 'jiuwen-default' }] }),
+    sessions, gateway: () => g, agentcore: ac, logger: {}, services: () => live,
+  })
   const plan = createPlanBridge({ services: () => live, gateway: () => g, sessions, logger: {}, debounceMs: 1 })
   if (order === 'adapter-first') live = S.svc
   const fire = (n, ...a) => { for (const fn of [...(listeners[n] || [])]) fn(...a) }
-  return { calls, sessions, fire, hs, plan, agents, planSets: S.planSets, listeners }
+  return { calls, acCalls, sessions, fire, hs, plan, agents, planSets: S.planSets, listeners, backend }
 }
 
 // Each area: drive(r, session) fires the host plugin's events; expect(calls, r, id) checks the jiuwen read-back.
@@ -84,6 +93,52 @@ for (const order of ['adapter-last', 'adapter-first']) {
       b.sessions.ensure(j.id); b.sessions.update(j.id, { turns: 1 })
       drive(b, j); await tick(); await expect(b.calls, b, j.id)
       // (c) dispose releases every listener
+      b.hs(); assert.equal(Object.values(b.listeners).flat().length, 0, 'listeners released')
+    })
+  }
+}
+
+// ── agent-core backend: same 12 areas + memory; Gateway-only areas soft-no-op ──
+const AC_EXPECT = {
+  'session-controller (create/selectModel/prompt)': (c, r, id) => assert.ok(r.sessions.get(id)),
+  'session-title': (c, r, id) => assert.equal(r.sessions.get(id).title, 'T 标题'), // mapping-only
+  'working-directory': (c, r, id) => assert.match(String(r.sessions.get(id).projectDir), /\/w/),
+  'dsh-schedule': (c) => assert.ok(!c.some(([m]) => m === 'heartbeat.set_conf')), // soft-skip
+  'dsh-permission-presets': (c) => assert.ok(!c.some(([m]) => /permission/.test(m))),
+  fork: async (c, r, id) => {
+    await r.hs.pendingFor(id + '-kid')
+    assert.ok(r.acCalls.some(x => x[0] === 'fork'))
+    assert.match(r.sessions.get(id + '-kid').jiuwenSessionId, /^fork-/)
+  },
+  'dsh-plan-mode': (c, r) => assert.deepEqual(r.planSets, [true]),
+  'dsh-goal': (c) => assert.ok(!c.some(([m]) => m === 'command.goal')),
+  'dsh-skill / skill-filesystem': async (c, r, id) => {
+    await r.hs.pendingFor(id)
+    // skills sync skipped on agent-core — no skillBodies from Gateway path
+    assert.equal(c.filter(([m]) => /skills/.test(m)).length, 0)
+  },
+  'agent-presets persona': () => {},
+  'workspace archive / agent dispose': (c, r, id) => {
+    assert.ok(!c.some(([m]) => m === 'session.delete'))
+    assert.ok(r.sessions.get(id))
+  },
+  'memory: agent-instructions, session-reference, session-search': (c) => assert.equal(c.length, 0),
+  'dsh-experimental-auto-review (auto preset)': (c) => assert.ok(!c.some(([m]) => /permission/.test(m))),
+  'compaction, turn-outline, time-context, mcp-client, ralph, terminal, worktree (no host-sync side effects)': (c) => assert.equal(c.length, 0),
+  'mcp-resources, subagent, todo, compaction, approval, web tools': (c) => assert.equal(c.length, 0),
+}
+
+for (const order of ['adapter-last', 'adapter-first']) {
+  for (const [area, { drive }] of Object.entries(AREAS)) {
+    test(`plugin compat agent-core [${order}] ${area}`, async () => {
+      const a = rig(order, 'agent-core'); const o = sess('stored-o', 'standin'); a.agents.set(o.id, { id: o.id, session: o })
+      drive(a, o); await tick()
+      assert.deepEqual(a.calls.filter(([m]) => m !== 'heartbeat.set_conf'), [], 'non-jiuwen session untouched')
+      assert.equal(a.sessions.get(o.id), undefined)
+      const b = rig(order, 'agent-core'); const j = sess('stored-j', 'jiuwen'); b.agents.set(j.id, { id: j.id, session: j })
+      b.sessions.ensure(j.id); b.sessions.update(j.id, { turns: 1 })
+      drive(b, j); await tick()
+      await AC_EXPECT[area](b.calls, b, j.id)
       b.hs(); assert.equal(Object.values(b.listeners).flat().length, 0, 'listeners released')
     })
   }

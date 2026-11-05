@@ -13,6 +13,7 @@ import { createJiuwenAdapter } from './adapter.js'
 import { createToolBridge } from './tool-bridge.js'
 import { GatewayTransport } from './gateway-transport.js'
 import { AgentCoreTransport } from './agentcore-transport.js'
+import { wrapGatewayApiForBackend, isAgentCoreBackend } from './agentcore-api.js'
 import { createInteractor } from './interaction.js'
 import { createBusyRegistry } from './busy-interrupt.js'
 import { createMcpBridge } from './mcp-bridge.js'
@@ -241,7 +242,13 @@ export function apply(ctx, config = {}) {
 
   const bridge = createToolBridge(cfg)
   const features = createFeatureCache()
-  const gatewayFor = () => {
+  const agentcoreFor = () => {
+    const c = readConfig()
+    return adapter._agentcoreTransport?.() || new AgentCoreTransport({
+      pythonPath: c.agentcorePython, checkpointDir: c.agentcoreCheckpointDir, logger,
+    })
+  }
+    const gatewayFor = () => {
     const c = readConfig()
     const t = new GatewayTransport({
       gatewayURL: c.gatewayURL,
@@ -282,13 +289,7 @@ export function apply(ctx, config = {}) {
       /** Methods this Gateway answered `unknown method` for (cached). */
       unsupported: () => features.unsupported(readConfig().gatewayURL),
       historyGet: async (sid, extra) => {
-        const c = readConfig()
-        if (c.backend === 'agent-core') {
-          const ac = adapter._agentcoreTransport?.() || new AgentCoreTransport({
-            pythonPath: c.agentcorePython, checkpointDir: c.agentcoreCheckpointDir, logger,
-          })
-          return ac.sessionHistory(jw(sid))
-        }
+        if (isAgentCoreBackend(readConfig())) return agentcoreFor().sessionHistory(jw(sid))
         return gatewayFor().historyGet(jw(sid), extra)
       },
       historyListTurns: (sid, extra) => gatewayFor().historyListTurns(jw(sid), extra),
@@ -298,24 +299,14 @@ export function apply(ctx, config = {}) {
       sessionList: (extra) => gatewayFor().sessionList(extra),
       sessionCreate: (extra) => gatewayFor().sessionCreate(extra),
       sessionDelete: async (sid, extra) => {
-        const c = readConfig()
-        if (c.backend === 'agent-core') {
-          const ac = adapter._agentcoreTransport?.() || new AgentCoreTransport({
-            pythonPath: c.agentcorePython, checkpointDir: c.agentcoreCheckpointDir, logger,
-          })
-          return ac.sessionDelete(jw(sid))
-        }
+        if (isAgentCoreBackend(readConfig())) return agentcoreFor().sessionDelete(jw(sid))
         return gatewayFor().sessionDelete(jw(sid), extra)
       },
       sessionFork: async (sid, extra) => {
-        const c = readConfig()
-        if (c.backend === 'agent-core') {
-          const ac = adapter._agentcoreTransport?.() || new AgentCoreTransport({
-            pythonPath: c.agentcorePython, checkpointDir: c.agentcoreCheckpointDir, logger,
-          })
+        if (isAgentCoreBackend(readConfig())) {
           const from = jw(sid)
           const to = extra?.new_session_id || extra?.to || `fork-${Date.now().toString(36)}`
-          return ac.sessionFork(from, to, extra || {})
+          return agentcoreFor().sessionFork(from, to, extra || {})
         }
         return gatewayFor().sessionFork(jw(sid), extra)
       },
@@ -374,6 +365,21 @@ export function apply(ctx, config = {}) {
       workflows: (sid, action, extra) => gatewayFor().workflows(jw(sid), action, extra),
     },
   }
+  api.gateway = wrapGatewayApiForBackend(api.gateway, {
+    getConfig: readConfig,
+    getAgentcore: agentcoreFor,
+    modelsFromConfig: () => {
+      const c = readConfig()
+      const models = (c.models || []).map((m) => ({
+        model_name: m.modelName || m.id,
+        model_id: m.id,
+        ...(m.provider ? { model_provider: m.provider } : {}),
+      }))
+      return { models, active_model: c.defaultModel || models[0]?.model_name || null }
+    },
+  })
+  api.backend = () => readConfig().backend || 'gateway'
+  api.isAgentCore = () => isAgentCoreBackend(readConfig())
   exposeService(ctx, cfg.serviceName, api, logger)
 
   // `/jiuwen <sub>` slash command when the host has a command registry (dsh-commands).
@@ -385,7 +391,63 @@ export function apply(ctx, config = {}) {
     titles.rename(live, title)
     return true
   }
-  const command = createJiuwenCommand({ sessions, gateway: gatewayFor, config: readConfig, mcpBridge, features, localRename, permLedger: { ...permLedger, release: async (o) => { const r = await permLedger.release(o); permsKey = null; return r } } })
+  /** Gateway-shaped object for /jiuwen: agent-core routes via api.gateway (clear UNSUPPORTED). */
+  const commandGateway = () => {
+    if (isAgentCoreBackend(readConfig())) {
+      // Shape matches GatewayTransport helpers used by commands.js
+      const g = api.gateway
+      return {
+        rpc: (m, p, o) => g.rpc(m, p, o),
+        features: { isUnsupported: () => false },
+        modelsList: (...a) => g.modelsList(...a),
+        modelsGet: (...a) => g.modelsGet(...a),
+        sessionMetadata: (...a) => g.sessionMetadata(...a),
+        sessionRename: (...a) => g.sessionRename(...a),
+        sessionPin: (...a) => g.sessionPin(...a),
+        sessionFork: (...a) => g.sessionFork(...a),
+        sessionSwitch: (...a) => g.sessionSwitch(...a),
+        sessionArchive: (...a) => g.sessionArchive(...a),
+        sessionDelete: (...a) => g.sessionDelete(...a),
+        historyGet: (...a) => g.historyGet(...a),
+        historyListTurns: (...a) => g.historyListTurns(...a),
+        chatInterrupt: (sid, intent, extra) => g.interrupt(sid, intent, extra),
+        chatResume: (...a) => g.chatResume(...a),
+        planStatus: (...a) => g.planStatus(...a),
+        workflows: (...a) => g.workflows(...a),
+        teamList: (...a) => g.teamList(...a),
+        projectList: (...a) => g.projectList(...a),
+        projectInfo: (...a) => g.projectInfo(...a),
+        sessionAssetsList: (...a) => g.sessionAssetsList(...a),
+        heartbeatConf: (...a) => g.heartbeatConf(...a),
+        heartbeatSetConf: (...a) => g.heartbeatSetConf(...a),
+        skillsList: (...a) => g.skillsList(...a),
+        skillsInstalled: (...a) => g.skillsInstalled(...a),
+        skillsToggle: (...a) => g.skillsToggle(...a),
+        pluginsList: (...a) => g.pluginsList(...a),
+        pluginsEnable: (...a) => g.pluginsEnable(...a),
+        pluginsDisable: (...a) => g.pluginsDisable(...a),
+        mcpList: (...a) => g.mcpList(...a),
+        memoryList: (...a) => g.memoryList(...a),
+        memoryStatus: (...a) => g.memoryStatus(...a),
+        agentsList: (...a) => g.agentsList(...a),
+        agentTemplatesList: (...a) => g.agentTemplatesList(...a),
+        permissionsToolsGet: (...a) => g.permissionsToolsGet(...a),
+        permissionsToolsUpdate: (...a) => g.permissionsToolsUpdate(...a),
+        compact: (...a) => g.compact(...a),
+        goal: (...a) => g.goal(...a),
+        btw: (...a) => g.btw(...a),
+        recap: (...a) => g.recap(...a),
+        commandsList: (...a) => g.commandsList(...a),
+        pathGet: (...a) => g.pathGet(...a),
+        localeGetConf: (...a) => g.localeGetConf(...a),
+        cronJobList: (...a) => g.cronJobList(...a),
+        updaterStatus: (...a) => g.updaterStatus(...a),
+        gatewayURL: 'agent-core://local',
+      }
+    }
+    return gatewayFor()
+  }
+  const command = createJiuwenCommand({ sessions, gateway: commandGateway, config: readConfig, mcpBridge, features, localRename, permLedger: { ...permLedger, release: async (o) => { const r = await permLedger.release(o); permsKey = null; return r } } })
   api.command = command.run
   if (cfg.registerCommands !== false && typeof ctx.inject === 'function') {
     try {
@@ -426,7 +488,7 @@ export function apply(ctx, config = {}) {
     }
     if (cfg.hostSync !== false) {
       disposers.push(hostSync = installHostSync({
-        ctx, config: readConfig, sessions, gateway: gatewayFor, logger, mcpBridge, permLedger,
+        ctx, config: readConfig, sessions, gateway: gatewayFor, agentcore: agentcoreFor, logger, mcpBridge, permLedger,
         services: () => ({
           skills: service('skills'),
           planMode: service('planMode'),
