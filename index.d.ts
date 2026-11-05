@@ -116,6 +116,10 @@ export interface JiuwenAdapterConfig {
   busyIgnoreSources?: string[]
   llmAdapterModule?: string
   mappingPath?: string
+  /** Sidecar python binary (default: .venv-sidecar/bin/python). */
+  agentcorePython?: string
+  /** Sidecar sqlite checkpointer directory. */
+  agentcoreCheckpointDir?: string
   mcpRpcTimeoutMs?: number
   /** Release a per-session MCP proxy after this long idle (ms, 0 = only on session end). Default 1800000. */
   mcpSessionIdleMs?: number
@@ -128,6 +132,8 @@ export interface JiuwenAdapterConfig {
   mcpServerName?: string
   mcpStateDir?: string
   mode?: 'gateway' | 'openai'
+  /** Product backend when mode=gateway (default gateway). */
+  backend?: 'gateway' | 'agent-core'
   modelDiscovery?: boolean
   models?: Array<{ id: string; name?: string; contextWindow?: number; maxTokens?: number; chatMode?: string }>
   noUiAnswer?: boolean

@@ -12,6 +12,7 @@ import { SessionStore } from './session-store.js'
 import { createJiuwenAdapter } from './adapter.js'
 import { createToolBridge } from './tool-bridge.js'
 import { GatewayTransport } from './gateway-transport.js'
+import { AgentCoreTransport } from './agentcore-transport.js'
 import { createInteractor } from './interaction.js'
 import { createBusyRegistry } from './busy-interrupt.js'
 import { createMcpBridge } from './mcp-bridge.js'
@@ -203,6 +204,35 @@ export function apply(ctx, config = {}) {
     attachments: () => {
       try { return (typeof ctx.get === 'function' ? ctx.get('attachments') : undefined) ?? ctx.attachments } catch { return undefined }
     },
+    /** Host tool runner for agent-core LocalFunction callbacks (ctx.tools.execute). */
+    executeTool: async (name, args, info = {}) => {
+      const tools = service('tools')
+      const agents = service('agents')
+      let agent
+      try { agent = agents?.get?.(info.dshSessionId || info.sessionId) } catch { agent = undefined }
+      const runtime = tools && typeof tools.execute === 'function' ? tools : (agent?.ctx?.tools && typeof agent.ctx.tools.execute === 'function' ? agent.ctx.tools : null)
+      if (runtime) {
+        const exec = {
+          callId: info.callId || `ac-${Date.now()}`,
+          name,
+          arguments: args ?? {},
+          agent,
+          signal: info.signal,
+        }
+        const result = await runtime.execute(exec)
+        if (result?.isError) {
+          const err = new Error(typeof result.text === 'string' ? result.text : `tool ${name} failed`)
+          err.isError = true
+          throw err
+        }
+        return result?.text ?? result?.content ?? result
+      }
+      // Legacy: direct definition execute
+      let def
+      try { def = agent ? tools?.get?.(name, agent) : tools?.get?.(name) } catch { def = undefined }
+      if (!def?.execute) throw new Error(`dsh tool ${name} not found`)
+      return def.execute(args ?? {}, { callId: info.callId, name, arguments: args ?? {}, agent, signal: info.signal })
+    },
   })
   const modelDiscovery = createModelDiscovery({ gateway: () => gatewayFor(), config: readConfig })
   const adapter = new AdapterClass()
@@ -251,15 +281,44 @@ export function apply(ctx, config = {}) {
       supports: (method, params) => { const t = gatewayFor(); return features.probe(readConfig().gatewayURL, (m, p, o) => GatewayTransport.prototype.rpc.call(t, m, p, o), method, params) },
       /** Methods this Gateway answered `unknown method` for (cached). */
       unsupported: () => features.unsupported(readConfig().gatewayURL),
-      historyGet: (sid, extra) => gatewayFor().historyGet(jw(sid), extra),
+      historyGet: async (sid, extra) => {
+        const c = readConfig()
+        if (c.backend === 'agent-core') {
+          const ac = adapter._agentcoreTransport?.() || new AgentCoreTransport({
+            pythonPath: c.agentcorePython, checkpointDir: c.agentcoreCheckpointDir, logger,
+          })
+          return ac.sessionHistory(jw(sid))
+        }
+        return gatewayFor().historyGet(jw(sid), extra)
+      },
       historyListTurns: (sid, extra) => gatewayFor().historyListTurns(jw(sid), extra),
       /** Collect one streamed history.get page (0.2.7: ack + `history.message` events). */
       historyMessages: (sid, extra) => gatewayFor().historyMessages(jw(sid), extra),
       sessionMetadata: (sid, extra) => gatewayFor().sessionMetadata(jw(sid), extra),
       sessionList: (extra) => gatewayFor().sessionList(extra),
       sessionCreate: (extra) => gatewayFor().sessionCreate(extra),
-      sessionDelete: (sid, extra) => gatewayFor().sessionDelete(jw(sid), extra),
-      sessionFork: (sid, extra) => gatewayFor().sessionFork(jw(sid), extra),
+      sessionDelete: async (sid, extra) => {
+        const c = readConfig()
+        if (c.backend === 'agent-core') {
+          const ac = adapter._agentcoreTransport?.() || new AgentCoreTransport({
+            pythonPath: c.agentcorePython, checkpointDir: c.agentcoreCheckpointDir, logger,
+          })
+          return ac.sessionDelete(jw(sid))
+        }
+        return gatewayFor().sessionDelete(jw(sid), extra)
+      },
+      sessionFork: async (sid, extra) => {
+        const c = readConfig()
+        if (c.backend === 'agent-core') {
+          const ac = adapter._agentcoreTransport?.() || new AgentCoreTransport({
+            pythonPath: c.agentcorePython, checkpointDir: c.agentcoreCheckpointDir, logger,
+          })
+          const from = jw(sid)
+          const to = extra?.new_session_id || extra?.to || `fork-${Date.now().toString(36)}`
+          return ac.sessionFork(from, to, extra || {})
+        }
+        return gatewayFor().sessionFork(jw(sid), extra)
+      },
       sessionRename: (sid, title, extra) => gatewayFor().sessionRename(jw(sid), title, extra),
       sessionPin: (sid, pinned, extra) => gatewayFor().sessionPin(jw(sid), pinned, extra),
       sessionSwitch: (sid, extra) => gatewayFor().sessionSwitch(jw(sid), extra),
@@ -402,7 +461,7 @@ export function apply(ctx, config = {}) {
     ctx.on?.('dispose', disposeAll)
   }
 
-  logger.info?.(`[dsh-jiuwen] registered provider "${cfg.provider}" brain=${cfg.brainOwnership} mode=${cfg.mode} mapping=${cfg.mappingPath}`)
+  logger.info?.(`[dsh-jiuwen] registered provider "${cfg.provider}" brain=${cfg.brainOwnership} mode=${cfg.mode} backend=${cfg.backend || "gateway"} mapping=${cfg.mappingPath}`)
 }
 
 /**

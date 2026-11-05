@@ -85,3 +85,34 @@ Intentional gaps (keep thin; do not chase 100%):
 | `server` task done-callback error paths | Race/cleanup edges exercised indirectly |
 | `session_manager` set_llm / remove_ability except | Defensive around agent-core hot-reload quirks |
 | `__main__` sys.path already-present branch | Only hit when imported twice from odd CWDs |
+
+
+## Node transport (M2)
+
+`src/agentcore-transport.js` spawns `.venv-sidecar/bin/python -m sidecar` and
+speaks the NDJSON-RPC above. Select it with:
+
+```yaml
+# cordis / plugin config
+backend: agent-core   # default: gateway
+# or env JIUWEN_BACKEND=agent-core
+```
+
+Default remains `gateway`. Provider id stays `jiuwen`; stream still ends with
+`finish: stop`. Sidecar `tool.call` events run through `ctx.tools.execute`
+(or a test `executeTool` hook) and answer with `tool.result`.
+
+```bash
+npm run test:agentcore   # Node transport unit + real-sidecar integration (coverage ≥90% on transport)
+npm test                 # full suite (must stay green)
+npm run test:sidecar     # Python sidecar suite
+```
+
+
+### Node transport coverage
+
+`npm run test:agentcore` enforces ≥90% line coverage on `src/agentcore-transport.js`.
+
+Intentional gaps: spawn `error` / failed-ping kill paths, stdin write/drain races,
+RPC timer edge, `safeArgs` JSON throw, and a few payload-field fallbacks in
+`extractText` / `extractReasoning` (defensive).

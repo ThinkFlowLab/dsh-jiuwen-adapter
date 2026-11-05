@@ -58,6 +58,11 @@ export function resolveConfig(raw = {}, opts = {}) {
   const mode = modeRaw === 'openai' || modeRaw === 'llm' || modeRaw === 'completions'
     ? 'openai'
     : 'gateway'
+  // Product brain backend when mode=gateway: classic Jiuwen Gateway WS, or local agent-core sidecar.
+  const backendRaw = String(env.JIUWEN_BACKEND || raw.backend || 'gateway').toLowerCase()
+  const backend = (backendRaw === 'agent-core' || backendRaw === 'agentcore' || backendRaw === 'ac')
+    ? 'agent-core'
+    : 'gateway'
 
   const apiKeyEnv = String(raw.apiKeyEnv || 'JIUWEN_API_KEY')
   const apiKey = firstNonEmpty(
@@ -99,6 +104,8 @@ export function resolveConfig(raw = {}, opts = {}) {
     /** ctx service name for the helper API (ctx.jiuwenAdapter). */
     serviceName: String(raw.serviceName || 'jiuwenAdapter'),
     mode,
+    /** gateway (default) | agent-core — which product backend mode=gateway uses. */
+    backend,
     brainOwnership: 'jiuwen',
     baseURL: stripTrailingSlash(String(
       env.JIUWEN_BASE_URL
@@ -121,6 +128,11 @@ export function resolveConfig(raw = {}, opts = {}) {
     defaultModel: String(raw.defaultModel || models[0]?.id || 'jiuwen-default'),
     models,
     mappingPath,
+    /** Absolute path to sidecar python (default: <repo>/.venv-sidecar/bin/python). */
+    agentcorePython: firstNonEmpty(env.AGENTCORE_PYTHON, typeof raw.agentcorePython === 'string' ? raw.agentcorePython : undefined),
+    /** Checkpointer dir for agent-core sidecar (default: $DSH_HOME/jiuwen-adapter/ac). */
+    agentcoreCheckpointDir: firstNonEmpty(env.DSH_JIUVEN_AC_DIR, env.AGENTCORE_CKPT_DIR, typeof raw.agentcoreCheckpointDir === 'string' ? raw.agentcoreCheckpointDir : undefined)
+      || `${dshHome}/jiuwen-adapter/ac`,
     workMode: String(raw.workMode || env.JIUWEN_WORK_MODE || 'agent'),
     projectDir: firstNonEmpty(env.JIUWEN_PROJECT_DIR, typeof raw.projectDir === 'string' ? raw.projectDir : undefined),
     requestTimeoutMs: Number(raw.requestTimeoutMs || env.JIUWEN_TIMEOUT_MS || 180_000),
