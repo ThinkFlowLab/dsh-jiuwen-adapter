@@ -4,6 +4,8 @@
  * RPCs, the session map, or adapter-side state — never silent no-op.
  */
 import { isAgentCoreBackend, agentcoreUnsupportedError } from './agentcore-api.js'
+import { existsSync, readdirSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 
 function byDsh(sessions, sid) {
   const id = String(sid || '')
@@ -145,8 +147,42 @@ export function createAgentCoreFacade(deps) {
         })),
       }
     },
-    async sessionAssetsList() {
-      return { assets: [], note: 'agent-core: session assets live in the sidecar workspace; use host file tools' }
+    async sessionAssetsList(sid) {
+      const cfg = getConfig()
+      const roots = [
+        cfg.agentcoreCheckpointDir,
+        cfg.projectDir,
+        join(process.cwd(), '.jiuwen-adapter', 'workspace'),
+      ].filter(Boolean)
+      const assets = []
+      const jid = sid ? jwId(sessions, sid) : null
+      for (const root of roots) {
+        if (!existsSync(root)) continue
+        let entries = []
+        try { entries = readdirSync(root) } catch { continue }
+        for (const name of entries.slice(0, 200)) {
+          if (jid && !name.includes(String(jid).slice(0, 8)) && name !== String(jid)) {
+            // Still list projectDir files; only filter checkpoint-ish roots.
+            if (root === cfg.agentcoreCheckpointDir) continue
+          }
+          const full = join(root, name)
+          let st
+          try { st = statSync(full) } catch { continue }
+          assets.push({
+            name,
+            path: full,
+            type: st.isDirectory() ? 'dir' : 'file',
+            size: st.isFile() ? st.size : undefined,
+          })
+        }
+      }
+      return {
+        assets,
+        session_id: jid || undefined,
+        note: assets.length
+          ? 'agent-core: local sidecar/workspace listing'
+          : 'agent-core: no local assets yet; host file tools also apply',
+      }
     },
     async interrupt(sid, _intent) {
       return getAgentcore().cancel(jwId(sessions, sid))
@@ -286,7 +322,21 @@ export function createAgentCoreFacade(deps) {
       if (m && !m.memoryBridge) {
         try { sessions.update(m.dshSessionId, { memoryBridge: 'adapter' }) } catch { /* ignore */ }
       }
-      return { ok: true, bridge: 'adapter', session_id: jwId(sessions, sid) }
+      // openjiuwen 0.1.20.post1 ships external providers; they need service creds.
+      // Without Gateway wiring / env, report capability + host-plugin fallback.
+      const providers = [
+        { name: 'adapter', available: true, note: 'session map + host memory plugins' },
+        { name: 'openjiuwen-long-term', available: Boolean(process.env.OPENJIUWEN_MEMORY_ENABLED), note: 'sidecar long_term_memory when enabled' },
+        { name: 'mem0', available: Boolean(process.env.MEM0_API_KEY || process.env.MEM0_API_BASE), note: 'needs MEM0_* env; else use host plugins' },
+        { name: 'lakebase', available: Boolean(process.env.LAKEBASE_URL || process.env.LAKEBASE_API_KEY), note: 'needs LAKEBASE_* env; else gateway' },
+      ]
+      return {
+        ok: true,
+        bridge: 'adapter',
+        session_id: jwId(sessions, sid),
+        providers,
+        hostPlugins: ['dsh-agent-instructions', 'dsh-session-reference', 'dsh-experimental-session-search'],
+      }
     },
     async filesList(sid) {
       return { files: [], session_id: jwId(sessions, sid) }
@@ -294,8 +344,30 @@ export function createAgentCoreFacade(deps) {
     async agentsList() {
       return { agents: sessions.list().map(m => ({ id: m.jiuwenAgentId || m.jiuwenSessionId, session_id: m.jiuwenSessionId })) }
     },
-    async teamTemplatesList() { return { templates: [] } },
-    async teamList() { return { teams: [] } },
+    async teamTemplatesList() {
+      // openjiuwen multi_agent ships hierarchical / handoff team patterns in-library.
+      // Full JiuwenSwarm team graph execution still needs Gateway agentserver.
+      const builtIn = [
+        { name: 'hierarchical', source: 'openjiuwen.core.multi_agent.teams.hierarchical_msgbus' },
+        { name: 'handoff', source: 'openjiuwen.core.multi_agent.teams.handoff' },
+        { name: 'hierarchical_tools', source: 'openjiuwen.core.multi_agent.teams.hierarchical_tools' },
+      ]
+      return { templates: builtIn, note: 'templates listable on agent-core; execute swarm via gatewayFallback' }
+    },
+    async teamList() {
+      const stored = state.listTeams?.() || { teams: [] }
+      return {
+        teams: stored.teams || [],
+        note: (stored.teams || []).length
+          ? 'adapter-side team registry'
+          : 'agent-core: no local teams; set via state or auto-route to Gateway',
+        gatewayFallback: true,
+      }
+    },
+    async teamBindingsList() {
+      const stored = state.listTeams?.() || { teams: [] }
+      return { teams: stored.teams || [], bindings: stored.teams || [], gatewayFallback: true }
+    },
     async agentsToolsList() { return { tools: [] } },
     async hooksList() { return { hooks: [] } },
     async projectList() { return { projects: [] } },
@@ -322,8 +394,38 @@ export function createAgentCoreFacade(deps) {
       if (m) sessions.update(m.dshSessionId, { pendingQuestion: undefined, lastAnswer: answers })
       return { ok: true, session_id: jwId(sessions, sid), ...(extra || {}) }
     },
-    async workflows() {
-      return { workflows: [], note: 'agent-core: swarm workflows require Gateway backend' }
+    async workflows(sid, action = 'list', extra = {}) {
+      const stored = state.listWorkflows?.() || { workflows: [] }
+      if (action === 'get' || action === 'get_workflow') {
+        const id = extra?.workflow_id || extra?.id
+        const hit = (stored.workflows || []).find(w => String(w.id || w.workflow_id) === String(id))
+        if (hit) return { workflow: hit }
+        return { workflow: null, gatewayFallback: true, note: 'swarm workflow get requires Gateway agentserver' }
+      }
+      return {
+        workflows: stored.workflows || [],
+        note: (stored.workflows || []).length
+          ? 'adapter-side workflow registry'
+          : 'agent-core: swarm workflow runtime needs Gateway; auto-routes when gatewayFallback enabled',
+        gatewayFallback: true,
+      }
+    },
+    async skillsMarketplaceList() {
+      const stored = state.listMarketplaces?.() || { marketplaces: [] }
+      return {
+        marketplaces: stored.marketplaces || [],
+        note: 'hub marketplace install is Gateway-only; listing may auto-route',
+        gatewayFallback: true,
+      }
+    },
+    async skillsGet(name) {
+      const list = await api.skillsList()
+      const hit = (list.skills || []).find(s => s.name === name)
+      if (hit) return hit
+      return { name, gatewayFallback: true, note: 'skill metadata beyond host list needs Gateway hub' }
+    },
+    async skillsVersionsList(name) {
+      return { versions: [], default_version: null, name, gatewayFallback: true }
     },
     async rpc(method, params = {}) {
       const m = String(method)
@@ -363,6 +465,12 @@ export function createAgentCoreFacade(deps) {
         'mcp.list': () => api.mcpList(),
         'memory.list': () => api.memoryList(params.session_id),
         'memory.status': () => api.memoryStatus(params.session_id),
+        'session.assets.list': () => api.sessionAssetsList(params.session_id),
+        'team.list': () => api.teamList(),
+        'team.templates.list': () => api.teamTemplatesList(),
+        'team.bindings.list': () => api.teamBindingsList(),
+        'skills.marketplace.list': () => api.skillsMarketplaceList(),
+        'command.workflows': () => api.workflows(params.session_id, params.action || 'list', params),
       }
       const fn = map[m]
       if (!fn) throw agentcoreUnsupportedError(m)
@@ -388,6 +496,24 @@ export function createAgentCoreFacade(deps) {
 /**
  * Replace Gateway-only throws with the agent-core facade when backend=agent-core.
  */
+async function maybeGatewayFallback(target, prop, args, result, getConfig) {
+  if (!result || result.gatewayFallback !== true) return result
+  const cfg = getConfig() || {}
+  if (cfg.gatewayFallback === false) return result
+  if (!cfg.gatewayURL) return result
+  const v = target?.[prop]
+  if (typeof v !== 'function') return result
+  try {
+    const routed = await v.apply(target, args)
+    if (routed != null) {
+      return { ...routed, routedVia: 'gateway', agentCoreNote: result.note }
+    }
+  } catch {
+    // Keep agent-core result when Gateway is down / method unknown.
+  }
+  return result
+}
+
 export function bindAgentCoreFacade(baseGatewayApi, facade, getConfig) {
   return new Proxy(baseGatewayApi, {
     get(target, prop, receiver) {
@@ -406,7 +532,21 @@ export function bindAgentCoreFacade(baseGatewayApi, facade, getConfig) {
           if (!isAgentCoreBackend(getConfig())) {
             return Reflect.get(target, prop, receiver).call(target, method, params, opts)
           }
-          return facade.rpc(method, params || {})
+          try {
+            return await facade.rpc(method, params || {})
+          } catch (e) {
+            if (e?.code !== 'UNSUPPORTED') throw e
+            // Auto-route unknown RPCs to Gateway when available.
+            if ((getConfig() || {}).gatewayFallback === false) throw e
+            const baseRpc = Reflect.get(target, 'rpc', receiver)
+            if (typeof baseRpc !== 'function') throw e
+            try {
+              const routed = await baseRpc.call(target, method, params, opts)
+              return { ...(routed || {}), routedVia: 'gateway' }
+            } catch {
+              throw e
+            }
+          }
         }
       }
       const fac = facade[prop]
@@ -417,10 +557,27 @@ export function bindAgentCoreFacade(baseGatewayApi, facade, getConfig) {
             if (typeof v === 'function') return v.apply(target, args)
             throw agentcoreUnsupportedError(prop)
           }
-          return fac.apply(facade, args)
+          const result = await fac.apply(facade, args)
+          return maybeGatewayFallback(target, prop, args, result, getConfig)
         }
       }
-      return Reflect.get(target, prop, receiver)
+      // Method missing on facade: non-functions pass through; functions may auto-route.
+      const baseVal = Reflect.get(target, prop, receiver)
+      if (typeof baseVal !== 'function') return baseVal
+      return async (...args) => {
+        if (!isAgentCoreBackend(getConfig())) {
+          return baseVal.apply(target, args)
+        }
+        if ((getConfig() || {}).gatewayFallback !== false) {
+          try {
+            const routed = await baseVal.apply(target, args)
+            return { ...(routed && typeof routed === 'object' ? routed : { value: routed }), routedVia: 'gateway' }
+          } catch {
+            throw agentcoreUnsupportedError(prop)
+          }
+        }
+        throw agentcoreUnsupportedError(prop)
+      }
     },
   })
 }

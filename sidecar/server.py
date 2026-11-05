@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Any, Optional, TextIO
 
 from . import fake_model
-from .redact import RedactFilter, redact_obj, redact_text
+from .redact import redact_obj, redact_text
+from .logutil import configure_logging
 from .session_manager import SessionManager, default_checkpoint_dir
 
 logger = logging.getLogger(__name__)
@@ -27,39 +28,6 @@ METHODS = {
 }
 
 
-def configure_logging(level: Optional[str] = None) -> None:
-    """Default WARNING; attach secret redaction; clamp noisy libs."""
-    raw = level or os.environ.get("AGENTCORE_LOG_LEVEL") or "WARNING"
-    try:
-        lvl = getattr(logging, raw.upper())
-    except AttributeError:
-        lvl = logging.WARNING
-    root = logging.getLogger()
-    if not root.handlers:
-        logging.basicConfig(
-            level=lvl,
-            stream=sys.stderr,
-            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        )
-    else:
-        root.setLevel(lvl)
-    redact = RedactFilter()
-    for handler in logging.root.handlers:
-        handler.addFilter(redact)
-    for name in (
-        "openjiuwen",
-        "httpx",
-        "httpcore",
-        "openai",
-        "urllib3",
-        "asyncio",
-        "common",
-        "session",
-        "runner",
-        "sys_operation",
-        "harness",
-    ):
-        logging.getLogger(name).setLevel(max(lvl, logging.WARNING))
 
 
 class NdjsonServer:
@@ -266,7 +234,10 @@ class NdjsonServer:
         return 0
 
 
-async def run_stdio(checkpoint_dir: Optional[Path] = None) -> int:
+async def run_stdio(
+    checkpoint_dir: Optional[Path] = None,
+    writer_file: Optional[TextIO] = None,
+) -> int:
     configure_logging()
-    server = NdjsonServer(checkpoint_dir=checkpoint_dir)
+    server = NdjsonServer(checkpoint_dir=checkpoint_dir, writer_file=writer_file)
     return await server.run()

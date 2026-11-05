@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SessionStore } from '../src/session-store.js'
@@ -164,7 +164,7 @@ test('facade covers remaining session/list/create/archive/memory/plugins/misc RP
   assert.ok(Array.isArray((await facade.filesList('d2')).files))
   assert.ok((await facade.agentsList()).agents)
   assert.deepEqual((await facade.teamList()).teams, [])
-  assert.deepEqual((await facade.teamTemplatesList()).templates, [])
+  assert.ok((await facade.teamTemplatesList()).templates.length >= 1)
   assert.deepEqual((await facade.agentsToolsList()).tools, [])
   assert.deepEqual((await facade.hooksList()).hooks, [])
   assert.deepEqual((await facade.projectList()).projects, [])
@@ -181,6 +181,24 @@ test('facade covers remaining session/list/create/archive/memory/plugins/misc RP
   await facade.userAnswer('d2', { a: 1 })
   assert.deepEqual((await facade.workflows()).workflows, [])
   assert.ok((await facade.sessionAssetsList()).assets)
+  assert.ok(Array.isArray((await facade.memoryStatus('d2')).providers))
+  assert.ok(Array.isArray((await facade.skillsMarketplaceList()).marketplaces))
+  assert.equal((await facade.teamList()).gatewayFallback, true)
+
+  // gateway auto-route when facade marks gatewayFallback
+  {
+    let routed = false
+    const baseGw = {
+      rpc: async () => ({ g: 1 }),
+      teamList: async () => { routed = true; return { teams: [{ team_name: 'from-gw' }] } },
+      skillsMarketplaceList: async () => ({ marketplaces: [{ name: 'hub' }] }),
+    }
+    const bound = bindAgentCoreFacade(baseGw, facade, () => ({ backend: 'agent-core', gatewayURL: 'ws://127.0.0.1:19000/ws' }))
+    const tl = await bound.teamList()
+    assert.equal(routed, true)
+    assert.equal(tl.routedVia, 'gateway')
+    assert.equal(tl.teams[0].team_name, 'from-gw')
+  }
 
   // rpc coverage for remaining methods
   for (const [m, p] of [
@@ -218,4 +236,94 @@ test('facade covers remaining session/list/create/archive/memory/plugins/misc RP
   assert.deepEqual(await bound.rpc('x', {}), { g: 1 })
   const boundAc = bindAgentCoreFacade(base, facade, () => ({ backend: 'agent-core' }))
   assert.ok(await boundAc.rpc('models.list', {}))
+})
+
+test('facade assets/teams/workflows/marketplace/memory providers + gatewayFallback off', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ac-facade2-'))
+  const sessions = new SessionStore(join(dir, 'map.json'))
+  const state = createAgentCoreState(join(dir, 'state.json'))
+  state.upsertTeam({ team_name: 'local-team' })
+  state.setWorkflows([{ id: 'wf1', name: 'demo' }])
+  state.setMarketplaces([{ name: 'local-hub', enabled: true }])
+  const facade = createAgentCoreFacade({
+    sessions,
+    getConfig: () => ({ backend: 'agent-core', projectDir: dir, agentcoreCheckpointDir: dir, gatewayFallback: false }),
+    getAgentcore: () => ({
+      sessionHistory: async () => ({ messages: [] }),
+      sessionDelete: async () => ({ ok: true }),
+      sessionFork: async () => ({ session_id: 'f' }),
+      cancel: async () => ({ ok: true }),
+    }),
+    state,
+  })
+  const assets = await facade.sessionAssetsList()
+  assert.ok(Array.isArray(assets.assets))
+  assert.equal((await facade.teamList()).teams[0].team_name, 'local-team')
+  assert.ok((await facade.teamTemplatesList()).templates.some(t => t.name === 'hierarchical'))
+  assert.equal((await facade.workflows()).workflows[0].id, 'wf1')
+  assert.equal((await facade.workflows(null, 'get_workflow', { workflow_id: 'wf1' })).workflow.id, 'wf1')
+  assert.equal((await facade.skillsMarketplaceList()).marketplaces[0].name, 'local-hub')
+  assert.ok((await facade.memoryStatus('x')).providers.some(p => p.name === 'mem0'))
+  assert.ok(await facade.rpc('team.list', {}))
+  assert.ok(await facade.rpc('session.assets.list', {}))
+  // gatewayFallback disabled: keep local result even if base would route
+  let called = false
+  const bound = bindAgentCoreFacade({
+    teamList: async () => { called = true; return { teams: [{ team_name: 'gw' }] } },
+  }, facade, () => ({ backend: 'agent-core', gatewayURL: 'ws://127.0.0.1:19000/ws', gatewayFallback: false }))
+  const tl = await bound.teamList()
+  assert.equal(called, false)
+  assert.equal(tl.teams[0].team_name, 'local-team')
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('bindAgentCoreFacade rpc auto-route + missing method + session delete/switch', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ac-facade3-'))
+  const sessions = new SessionStore(join(dir, 'map.json'))
+  sessions.ensure('a', { preferredJiuwenId: 'ja' })
+  sessions.ensure('b', { preferredJiuwenId: 'jb' })
+  sessions.update('a', { active: true })
+  const state = createAgentCoreState(join(dir, 'state.json'))
+  let deleted = null
+  const facade = createAgentCoreFacade({
+    sessions,
+    getConfig: () => ({ backend: 'agent-core', projectDir: dir, gatewayURL: 'ws://127.0.0.1:9/ws' }),
+    getAgentcore: () => ({
+      sessionHistory: async () => ({ messages: [{ role: 'user' }] }),
+      sessionDelete: async (id) => { deleted = id; return null },
+      sessionFork: async () => ({ new_session_id: 'nf' }),
+      cancel: async () => ({ ok: true }),
+    }),
+    state,
+  })
+  await facade.sessionSwitch('b')
+  assert.equal(sessions.get('b').active, true)
+  assert.equal(sessions.get('a').active, false)
+  await facade.sessionDelete('a')
+  assert.equal(deleted, 'ja')
+  assert.ok(!(sessions.get('a')))
+  assert.equal((await facade.skillsGet('nope')).gatewayFallback, true)
+  assert.ok(Array.isArray((await facade.skillsVersionsList('x')).versions))
+  assert.equal((await facade.workflows(null, 'get', { id: 'missing' })).gatewayFallback, true)
+
+  const base = {
+    rpc: async (m) => ({ method: m, from: 'gw' }),
+    unsupported: () => ['x'],
+    onlyOnGateway: async () => ({ ok: 1 }),
+    teamList: async () => { throw new Error('gw down') },
+  }
+  const bound = bindAgentCoreFacade(base, facade, () => ({ backend: 'agent-core', gatewayURL: 'ws://x', gatewayFallback: true }))
+  assert.deepEqual(bound.unsupported(), [])
+  const routedRpc = await bound.rpc('totally.unknown', {})
+  assert.equal(routedRpc.routedVia, 'gateway')
+  assert.equal(routedRpc.method, 'totally.unknown')
+  const only = await bound.onlyOnGateway()
+  assert.equal(only.routedVia, 'gateway')
+  // teamList fallback catches gw error and keeps local
+  const tl = await bound.teamList()
+  assert.ok(!tl.routedVia)
+  const boundGw = bindAgentCoreFacade(base, facade, () => ({ backend: 'gateway' }))
+  assert.deepEqual(boundGw.unsupported(), ['x'])
+  assert.deepEqual(await boundGw.rpc('z', {}), { method: 'z', from: 'gw' })
+  rmSync(dir, { recursive: true, force: true })
 })

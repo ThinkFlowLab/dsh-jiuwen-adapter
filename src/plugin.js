@@ -403,56 +403,18 @@ export function apply(ctx, config = {}) {
   /** Gateway-shaped object for /jiuwen: agent-core routes via api.gateway (clear UNSUPPORTED). */
   const commandGateway = () => {
     if (isAgentCoreBackend(readConfig())) {
-      // Shape matches GatewayTransport helpers used by commands.js
+      // Full agent-core facade (bound); aliases match GatewayTransport names used by commands.js.
       const g = api.gateway
-      return {
-        rpc: (m, p, o) => g.rpc(m, p, o),
-        features: { isUnsupported: () => false },
-        modelsList: (...a) => g.modelsList(...a),
-        modelsGet: (...a) => g.modelsGet(...a),
-        sessionMetadata: (...a) => g.sessionMetadata(...a),
-        sessionRename: (...a) => g.sessionRename(...a),
-        sessionPin: (...a) => g.sessionPin(...a),
-        sessionFork: (...a) => g.sessionFork(...a),
-        sessionSwitch: (...a) => g.sessionSwitch(...a),
-        sessionArchive: (...a) => g.sessionArchive(...a),
-        sessionDelete: (...a) => g.sessionDelete(...a),
-        historyGet: (...a) => g.historyGet(...a),
-        historyListTurns: (...a) => g.historyListTurns(...a),
-        chatInterrupt: (sid, intent, extra) => g.interrupt(sid, intent, extra),
-        chatResume: (...a) => g.chatResume(...a),
-        planStatus: (...a) => g.planStatus(...a),
-        workflows: (...a) => g.workflows(...a),
-        teamList: (...a) => g.teamList(...a),
-        projectList: (...a) => g.projectList(...a),
-        projectInfo: (...a) => g.projectInfo(...a),
-        sessionAssetsList: (...a) => g.sessionAssetsList(...a),
-        heartbeatConf: (...a) => g.heartbeatConf(...a),
-        heartbeatSetConf: (...a) => g.heartbeatSetConf(...a),
-        skillsList: (...a) => g.skillsList(...a),
-        skillsInstalled: (...a) => g.skillsInstalled(...a),
-        skillsToggle: (...a) => g.skillsToggle(...a),
-        pluginsList: (...a) => g.pluginsList(...a),
-        pluginsEnable: (...a) => g.pluginsEnable(...a),
-        pluginsDisable: (...a) => g.pluginsDisable(...a),
-        mcpList: (...a) => g.mcpList(...a),
-        memoryList: (...a) => g.memoryList(...a),
-        memoryStatus: (...a) => g.memoryStatus(...a),
-        agentsList: (...a) => g.agentsList(...a),
-        agentTemplatesList: (...a) => g.agentTemplatesList(...a),
-        permissionsToolsGet: (...a) => g.permissionsToolsGet(...a),
-        permissionsToolsUpdate: (...a) => g.permissionsToolsUpdate(...a),
-        compact: (...a) => g.compact(...a),
-        goal: (...a) => g.goal(...a),
-        btw: (...a) => g.btw(...a),
-        recap: (...a) => g.recap(...a),
-        commandsList: (...a) => g.commandsList(...a),
-        pathGet: (...a) => g.pathGet(...a),
-        localeGetConf: (...a) => g.localeGetConf(...a),
-        cronJobList: (...a) => g.cronJobList(...a),
-        updaterStatus: (...a) => g.updaterStatus(...a),
-        gatewayURL: 'agent-core://local',
-      }
+      return new Proxy(g, {
+        get(target, prop, receiver) {
+          if (prop === 'features') return { isUnsupported: () => false }
+          if (prop === 'gatewayURL') return 'agent-core://local'
+          if (prop === 'chatInterrupt') {
+            return (sid, intent, extra) => target.interrupt(sid, intent, extra)
+          }
+          return Reflect.get(target, prop, receiver)
+        },
+      })
     }
     return gatewayFor()
   }

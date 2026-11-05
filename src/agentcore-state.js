@@ -12,6 +12,9 @@ const DEFAULT = () => ({
   permissions: { tools: {} }, // name → level
   plugins: {}, // name → enabled bool
   skills: {}, // name → enabled bool (host skill toggles mirrored)
+  teams: [], // { team_name, agents?, note? }
+  workflows: [], // { id, name, status? }
+  marketplaces: [], // { name, enabled?, source? }
   updatedAt: new Date().toISOString(),
 })
 
@@ -22,7 +25,16 @@ export function createAgentCoreState(filePath) {
     if (!path || !existsSync(path)) return
     try {
       const raw = JSON.parse(readFileSync(path, 'utf8'))
-      data = { ...DEFAULT(), ...raw, permissions: { tools: { ...(raw?.permissions?.tools || {}) } }, plugins: { ...(raw?.plugins || {}) }, skills: { ...(raw?.skills || {}) } }
+      data = {
+        ...DEFAULT(),
+        ...raw,
+        permissions: { tools: { ...(raw?.permissions?.tools || {}) } },
+        plugins: { ...(raw?.plugins || {}) },
+        skills: { ...(raw?.skills || {}) },
+        teams: Array.isArray(raw?.teams) ? raw.teams : [],
+        workflows: Array.isArray(raw?.workflows) ? raw.workflows : [],
+        marketplaces: Array.isArray(raw?.marketplaces) ? raw.marketplaces : [],
+      }
     } catch { /* keep default */ }
   }
   const save = () => {
@@ -70,6 +82,20 @@ export function createAgentCoreState(filePath) {
       save()
       return { name, enabled: Boolean(enabled) }
     },
+    listTeams() { return { teams: [...(data.teams || [])] } },
+    setTeams(teams) { data.teams = Array.isArray(teams) ? teams : []; save(); return this.listTeams() },
+    upsertTeam(team) {
+      const name = String(team?.team_name || team?.name || '').trim()
+      if (!name) return this.listTeams()
+      const rest = (data.teams || []).filter(t => (t.team_name || t.name) !== name)
+      data.teams = [...rest, { ...team, team_name: name }]
+      save()
+      return this.listTeams()
+    },
+    listWorkflows() { return { workflows: [...(data.workflows || [])] } },
+    setWorkflows(workflows) { data.workflows = Array.isArray(workflows) ? workflows : []; save(); return this.listWorkflows() },
+    listMarketplaces() { return { marketplaces: [...(data.marketplaces || [])] } },
+    setMarketplaces(marketplaces) { data.marketplaces = Array.isArray(marketplaces) ? marketplaces : []; save(); return this.listMarketplaces() },
     /** Snapshot for tests. */
     _dump() { return JSON.parse(JSON.stringify(data)) },
   }

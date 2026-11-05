@@ -168,12 +168,12 @@ Every Gateway-backed feature has a native agent-core implementation (sidecar RPC
 
 Existing `session-map.json` entries keep their `jiuwenSessionId`. On first agent-core turn the sidecar checkpointer is empty, so **history starts fresh** for that id; a one-time warning is logged (`backendOrigin: gateway` → migrated note). To keep Gateway history, set `backend: gateway`. New sessions record `backendOrigin: agent-core|gateway`.
 
-### Genuinely out of scope (needs Gateway product / not adapter-replicable)
+### Remaining Gateway-dependent surfaces (agent-core implements what openjiuwen allows)
 
-| Item | Reason | Workaround |
-|---|---|---|
-| Jiuwen Swarm workflows / team runtime | Requires Gateway agentserver graph runner | `backend: gateway` for swarm turns |
-| Jiuwen hub skill marketplace install | Remote hub APIs on Gateway only | Use host dsh skills (bodies injected) |
-| Jiuwen session assets browser (`session.assets.list`) | Gateway FS index; sidecar workspace is local | Host file tools / workspace path |
-| Cross-process Jiuwen memory engine (mem0/lakebase server) | External memory service wired through Gateway | Host memory plugins (agent-instructions, session-reference, session-search) |
+| Item | agent-core status | Why not full parity | Fallback |
+|---|---|---|---|
+| Swarm workflow **execution** / team graph runtime | List/registry in `agentcore-state`; openjiuwen `multi_agent` templates enumerated | Graph runner lives in Gateway agentserver, not in the sidecar `LocalFunction` agent loop — would need embedding agentserver or rewriting dsh swarm UX on TeamRuntime | Auto-route RPC/API to Gateway when `gatewayURL` is up (`gatewayFallback`, default on). Or `backend: gateway` for those turns |
+| Hub skill **marketplace install** | `skillsMarketplaceList` + state registry; install still Gateway | Remote hub APIs are Gateway product endpoints | Auto-route list/install to Gateway; otherwise use host dsh skills (bodies injected) |
+| Session assets browser | **Implemented**: lists sidecar checkpoint + `projectDir` files | Not the Gateway FS index / web UI browser | Host file tools; local listing is enough for agent use |
+| External mem0 / lakebase memory | Status reports provider availability from env; openjiuwen ships providers | Needs live mem0/lakebase service + credentials; Gateway wires them into agentserver | Set `MEM0_*` / `LAKEBASE_*` / `OPENJIUWEN_MEMORY_ENABLED`, or use host memory plugins (`dsh-agent-instructions`, `dsh-session-reference`, `dsh-experimental-session-search`) |
 

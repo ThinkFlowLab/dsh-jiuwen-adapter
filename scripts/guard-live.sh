@@ -154,7 +154,13 @@ case $BACKEND in agent-core|gateway|both|agentcore|ac) ;; *) log "GUARD_BACKEND 
 [ "$BACKEND" = agentcore ] || [ "$BACKEND" = ac ] && BACKEND=agent-core
 skipped_suite() { printf 'SKIP  %s (GUARD_ONLY=%s)\n' "$1" "$ONLY" > "$2"; log "skip $1 (GUARD_ONLY=$ONLY)"; }
 if [ "$ONLY" = plain-dsh ]; then skipped_suite test:live "$RUN_DIR/test-live.log"; LIVE_RC=0
-else run_suite test:live "$RUN_DIR/test-live.log" "${LIVE_ENV[@]}" JIUWEN_BACKEND="${BACKEND%%,*}"; LIVE_RC=$?; fi
+else
+  # `both` means plain-dsh twice; live still needs a single concrete backend.
+  # Prefer agent-core (product default); gateway coverage comes from plain-dsh + optional GUARD_LIVE_BACKEND.
+  LIVE_BACKEND=$BACKEND
+  [ "$BACKEND" = both ] && LIVE_BACKEND=${GUARD_LIVE_BACKEND:-agent-core}
+  run_suite test:live "$RUN_DIR/test-live.log" "${LIVE_ENV[@]}" JIUWEN_BACKEND="$LIVE_BACKEND"; LIVE_RC=$?
+fi
 PLAIN_RC=0
 PLAIN_AC_RC=0
 PLAIN_GW_RC=0

@@ -8,6 +8,7 @@
  */
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
+import { agentcoreChildEnv } from './jiuwen-env.js'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -84,6 +85,7 @@ export class AgentCoreTransport {
     const py = this.resolvePython()
     const env = {
       ...process.env,
+      ...agentcoreChildEnv(),
       ...this.env,
       AGENTCORE_LOG_LEVEL: this.env.AGENTCORE_LOG_LEVEL || process.env.AGENTCORE_LOG_LEVEL || 'WARNING',
       PYTHONUNBUFFERED: '1',

@@ -8,6 +8,7 @@
  * See ARCHITECTURE.md.
  */
 
+import { resolveAgentCoreModel } from './jiuwen-env.js'
 import { OpenAiTransport } from './openai-transport.js'
 import { GatewayTransport } from './gateway-transport.js'
 import { AgentCoreTransport } from './agentcore-transport.js'
@@ -397,15 +398,7 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
                 ...turnHooks,
                 tools: hostTools,
                 system: acSystem,
-                model: {
-                  provider: process.env.AGENTCORE_FAKE_MODEL === '1' ? 'fake' : (overrides.modelProvider || 'OpenAI'),
-                  api_base: String(cfg.baseURL || 'http://127.0.0.1:9/v1'),
-                  api_key_env: cfg.apiKeyEnv || 'JIUWEN_API_KEY',
-                  model: overrides.modelName || options.model || cfg.defaultModel,
-                  ...(options.temperature != null ? { temperature: options.temperature } : {}),
-                  ...(options.maxTokens != null ? { max_tokens: options.maxTokens } : {}),
-                  ...(options.topP != null ? { top_p: options.topP } : {}),
-                },
+                model: resolveAgentCoreModel(cfg, options, overrides),
                 cwd: overrides.projectDir || cfg.projectDir || turnMapping.projectDir,
                 plan: (overrides.chatMode || turnMapping.chatMode || cfg.chatMode) === 'agent.plan' || undefined,
               })

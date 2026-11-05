@@ -287,7 +287,7 @@ def test_main_module_entry(tmp_path, monkeypatch):
     monkeypatch.setenv("DSH_JIUVEN_AC_DIR", str(tmp_path / "ac"))
     monkeypatch.setenv("AGENTCORE_FAKE_MODEL", "1")
 
-    async def fake_run(checkpoint_dir=None):
+    async def fake_run(checkpoint_dir=None, writer_file=None):
         assert checkpoint_dir is not None
         return 0
 

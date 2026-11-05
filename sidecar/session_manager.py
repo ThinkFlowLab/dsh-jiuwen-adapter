@@ -365,6 +365,9 @@ class SessionManager:
         fut.set_result({"ok": ok, "content": content})
 
     async def turn_start(self, params: dict) -> dict:
+        # openjiuwen may attach stdout handlers lazily — keep NDJSON wire clean.
+        from .logutil import configure_logging
+        configure_logging()
         if not params.get("sid"):
             raise ValueError("missing params: sid")
         if params.get("query") is None or params.get("query") == "":
