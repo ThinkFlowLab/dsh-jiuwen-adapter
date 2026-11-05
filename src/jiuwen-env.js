@@ -88,9 +88,10 @@ export function resolveAgentCoreModel(cfg = {}, options = {}, overrides = {}) {
   // dsh / cordis often pass the alias "jiuwen-default"; map to the real model in jiuwen .env.
   const alias = new Set(['jiuwen-default', 'jiuwen-swarm', 'jiuwen', 'default'])
   const rawName = first(overrides.modelName, options.model, cfg.defaultModel)
+  // Env wins over jiuwen .env so live/tests can override (e.g. AGENTCORE_MODEL).
   const modelName = (rawName && alias.has(String(rawName).toLowerCase())
-    ? first(jw.MODEL_NAME, rawName)
-    : first(rawName, jw.MODEL_NAME)) || 'jiuwen-default'
+    ? first(process.env.AGENTCORE_MODEL, process.env.MODEL_NAME, jw.MODEL_NAME, rawName)
+    : first(overrides.modelName, process.env.AGENTCORE_MODEL, process.env.MODEL_NAME, rawName, jw.MODEL_NAME)) || 'jiuwen-default'
   const provider = process.env.AGENTCORE_FAKE_MODEL === '1'
     ? 'fake'
     : first(overrides.modelProvider, jw.MODEL_PROVIDER, 'OpenAI')

@@ -371,6 +371,10 @@ export class AgentCoreTransport {
       const { type, payload } = msg.params || {}
       if (!type) return
       emitEvent({ type: 'chunk', chunkType: type, payload, raw: msg.params })
+      if (type === 'adapter_phase') {
+        emitEvent({ type: 'adapter_phase', phases: payload, sid: msg.params?.sid })
+        return
+      }
 
       if (type === 'llm_output' || type === 'answer') {
         const delta = extractText(payload)

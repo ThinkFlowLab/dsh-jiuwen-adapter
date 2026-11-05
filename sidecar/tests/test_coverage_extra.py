@@ -506,3 +506,42 @@ async def test_plan_flag_enables_plan_mode(ckpt_dir, writer, fake):
         assert cfg.enable_plan_mode is True
     finally:
         await h.stop()
+
+import pytest
+from sidecar.session_manager import SessionManager
+
+@pytest.mark.asyncio
+async def test_sync_tools_skips_unchanged_fingerprint(monkeypatch):
+    emits = []
+    async def emit(ev, params):
+        emits.append((ev, params))
+    sm = SessionManager(emit)
+    await sm.start()
+    try:
+        specs = [
+            {"name": "read", "description": "r", "parameters": {"type": "object", "properties": {}}},
+            {"name": "write", "description": "w", "parameters": {"type": "object", "properties": {}}},
+        ]
+        agent = sm._ensure_agent("s-fp", {"provider": "fake", "model": "fake"}, "sys", specs)
+        n_add = 0
+        orig_add = agent.ability_manager.add_ability
+        def counting_add(*a, **k):
+            nonlocal n_add
+            n_add += 1
+            return orig_add(*a, **k)
+        agent.ability_manager.add_ability = counting_add
+        # Second ensure with same tools+model+system must skip tool rebind
+        sm._ensure_agent("s-fp", {"provider": "fake", "model": "fake"}, "sys", specs)
+        assert n_add == 0
+        phases = getattr(agent, "_dsh_last_phases", {})
+        assert phases.get("tools", {}).get("skipped") is True
+        # Changing a description forces rebind
+        specs2 = [
+            {"name": "read", "description": "r2", "parameters": {"type": "object", "properties": {}}},
+            {"name": "write", "description": "w", "parameters": {"type": "object", "properties": {}}},
+        ]
+        sm._ensure_agent("s-fp", {"provider": "fake", "model": "fake"}, "sys", specs2)
+        assert n_add >= 1
+        assert getattr(agent, "_dsh_last_phases", {}).get("tools", {}).get("skipped") is False
+    finally:
+        await sm.stop()

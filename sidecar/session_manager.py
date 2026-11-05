@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
+import time
 import logging
 import os
 import tempfile
@@ -248,7 +251,40 @@ class SessionManager:
 
         return LocalFunction(card=card, func=_rpc_func)
 
-    def _sync_tools(self, agent: Any, sid: str, tool_specs: List[dict]) -> None:
+    @staticmethod
+    def _tools_fingerprint(tool_specs: List[dict]) -> str:
+        """Stable hash of tool name+description+parameters; skip rebind when unchanged."""
+        items = []
+        for t in tool_specs:
+            name = t.get("name")
+            if not name:
+                continue
+            items.append((
+                name,
+                t.get("description") or "",
+                json.dumps(t.get("parameters") or {}, sort_keys=True, ensure_ascii=False),
+            ))
+        items.sort(key=lambda x: x[0])
+        blob = json.dumps(items, ensure_ascii=False, separators=(",", ":"))
+        return hashlib.sha256(blob.encode()).hexdigest()
+
+    @staticmethod
+    def _model_fingerprint(model_spec: dict) -> str:
+        keys = ("provider", "api_base", "model", "api_key_env", "temperature", "max_tokens", "top_p")
+        slim = {k: model_spec.get(k) for k in keys}
+        return hashlib.sha256(
+            json.dumps(slim, sort_keys=True, ensure_ascii=False, default=str).encode()
+        ).hexdigest()
+
+    def _sync_tools(self, agent: Any, sid: str, tool_specs: List[dict]) -> dict:
+        """Add/remove tools. Skip full rebind when the tool set fingerprint is unchanged.
+        Returns timing stats for phase profiling.
+        """
+        t0 = time.perf_counter()
+        fp = self._tools_fingerprint(tool_specs)
+        prev_fp = getattr(self, "_tool_fps", {}).get(sid)
+        if prev_fp == fp and sid in self._tool_names:
+            return {"skipped": True, "ms": round((time.perf_counter() - t0) * 1000, 2), "n": len(self._tool_names[sid])}
         wanted = {t["name"]: t for t in tool_specs if t.get("name")}
         current = self._tool_names.get(sid, set())
         to_remove = current - set(wanted)
@@ -259,7 +295,7 @@ class SessionManager:
                 logger.exception("remove_ability failed sid=%s", sid)
         for name, spec in wanted.items():
             if name in current:
-                # Re-bind so the closure still points at this SessionManager.
+                # Spec may have changed even if name stayed — re-bind this one.
                 try:
                     agent.ability_manager.remove_ability(name)
                 except Exception:
@@ -267,6 +303,10 @@ class SessionManager:
             tool = self._make_tool(sid, spec)
             agent.ability_manager.add_ability(tool.card, tool)
         self._tool_names[sid] = set(wanted)
+        if not hasattr(self, "_tool_fps"):
+            self._tool_fps: Dict[str, str] = {}
+        self._tool_fps[sid] = fp
+        return {"skipped": False, "ms": round((time.perf_counter() - t0) * 1000, 2), "n": len(wanted)}
 
     def _ensure_agent(
         self,
@@ -279,26 +319,46 @@ class SessionManager:
         model = build_model(model_spec)
         ws = cwd or str(self._workspace_dir / sid)
         Path(ws).mkdir(parents=True, exist_ok=True)
+        phases: Dict[str, Any] = {}
 
         if sid in self._agents:
             agent = self._agents[sid]
-            try:
-                agent.react_agent.set_llm(model)
-            except Exception:
-                logger.exception("set_llm failed sid=%s", sid)
-            if system:
+            mfp = self._model_fingerprint(model_spec)
+            if not hasattr(self, "_model_fps"):
+                self._model_fps: Dict[str, str] = {}
+            if self._model_fps.get(sid) != mfp:
+                t0 = time.perf_counter()
                 try:
-                    # Hot-reload identity section from host system prompt.
-                    import dataclasses
-                    cfg = getattr(agent, "_deep_config", None)
-                    if cfg is not None and hasattr(agent, "configure"):
-                        agent.configure(dataclasses.replace(cfg, system_prompt=system))
-                    elif hasattr(agent, "_hot_reload_system_prompt") and cfg is not None:
-                        cfg.system_prompt = system
-                        agent._hot_reload_system_prompt(cfg)
+                    agent.react_agent.set_llm(model)
                 except Exception:
-                    logger.exception("system prompt reload failed sid=%s", sid)
-            self._sync_tools(agent, sid, tool_specs)
+                    logger.exception("set_llm failed sid=%s", sid)
+                phases["set_llm_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+                self._model_fps[sid] = mfp
+            else:
+                phases["set_llm_ms"] = 0
+            if system:
+                if not hasattr(self, "_system_fps"):
+                    self._system_fps: Dict[str, str] = {}
+                sfp = hashlib.sha256(system.encode()).hexdigest()
+                if self._system_fps.get(sid) != sfp:
+                    t0 = time.perf_counter()
+                    try:
+                        # Hot-reload identity section from host system prompt.
+                        import dataclasses
+                        cfg = getattr(agent, "_deep_config", None)
+                        if cfg is not None and hasattr(agent, "configure"):
+                            agent.configure(dataclasses.replace(cfg, system_prompt=system))
+                        elif hasattr(agent, "_hot_reload_system_prompt") and cfg is not None:
+                            cfg.system_prompt = system
+                            agent._hot_reload_system_prompt(cfg)
+                    except Exception:
+                        logger.exception("system prompt reload failed sid=%s", sid)
+                    phases["system_reload_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+                    self._system_fps[sid] = sfp
+                else:
+                    phases["system_reload_ms"] = 0
+            phases["tools"] = self._sync_tools(agent, sid, tool_specs)
+            agent._dsh_last_phases = phases  # type: ignore[attr-defined]
             return agent
 
         tools = [self._make_tool(sid, t) for t in tool_specs if t.get("name")]
@@ -320,6 +380,17 @@ class SessionManager:
         )
         self._agents[sid] = agent
         self._tool_names[sid] = {t.card.name for t in tools}
+        if not hasattr(self, "_tool_fps"):
+            self._tool_fps = {}
+        if not hasattr(self, "_model_fps"):
+            self._model_fps = {}
+        if not hasattr(self, "_system_fps"):
+            self._system_fps = {}
+        self._tool_fps[sid] = self._tools_fingerprint(tool_specs)
+        self._model_fps[sid] = self._model_fingerprint(model_spec)
+        if system:
+            self._system_fps[sid] = hashlib.sha256(system.encode()).hexdigest()
+        agent._dsh_last_phases = {"created": True, "tools": {"n": len(tools)}}  # type: ignore[attr-defined]
 
         # Image window mutator (per-turn images held in _pending_images).
         async def img_mutator(_ctx, window):
@@ -383,7 +454,12 @@ class SessionManager:
         if sid in self._turn_tasks and not self._turn_tasks[sid].done():
             raise RuntimeError(f"session {sid} already has an active turn")
 
+        t_ensure = time.perf_counter()
         agent = self._ensure_agent(sid, model_spec, system, tools, cwd=cwd)
+        ensure_ms = round((time.perf_counter() - t_ensure) * 1000, 2)
+        phases = dict(getattr(agent, "_dsh_last_phases", {}) or {})
+        phases["ensure_ms"] = ensure_ms
+        await self._emit("chunk", {"type": "adapter_phase", "payload": phases, "sid": sid})
         await self._register_img_mutator(agent)
         plan = params.get("plan")
         if plan:
@@ -493,6 +569,10 @@ class SessionManager:
         self._agents.pop(sid, None)
         self._tool_names.pop(sid, None)
         self._pending_images.pop(sid, None)
+        for store in ("_tool_fps", "_model_fps", "_system_fps"):
+            d = getattr(self, store, None)
+            if isinstance(d, dict):
+                d.pop(sid, None)
         return {"ok": True}
 
     async def session_history(self, params: dict) -> dict:

@@ -177,3 +177,144 @@ Existing `session-map.json` entries keep their `jiuwenSessionId`. On first agent
 | Session assets browser | **Implemented**: lists sidecar checkpoint + `projectDir` files | Not the Gateway FS index / web UI browser | Host file tools; local listing is enough for agent use |
 | External mem0 / lakebase memory | Status reports provider availability from env; openjiuwen ships providers | Needs live mem0/lakebase service + credentials; Gateway wires them into agentserver | Set `MEM0_*` / `LAKEBASE_*` / `OPENJIUWEN_MEMORY_ENABLED`, or use host memory plugins (`dsh-agent-instructions`, `dsh-session-reference`, `dsh-experimental-session-search`) |
 
+
+## Feature coverage vs Gateway (deep audit)
+
+Status legend: **native** = openjiuwen/sidecar; **adapter** = session map / `agentcore-state.json` / host pipeline; **fallback** = `gatewayFallback` auto-route; **missing** = not available.
+
+### Host sync (see [host-sync.md](./host-sync.md))
+
+| Feature | agent-core status | Live-tested |
+|---|---|---|
+| Skills enable/disable + body inject | adapter (mapping `skillBodies` + system inject) | unit/compat; deep parity probe |
+| MCP / connectors sync | adapter (`mcpMode: local-function`; host tools via LocalFunction) | live tool round-trips |
+| Model picker | native (`set_llm` / turn model) | live matrix model-switch |
+| Plan mode | native (`enable_plan_mode`) | compat + deep plan-ish |
+| Working directory | native (turn `cwd` / workspace) | live |
+| Title rename | adapter (session map) | compat |
+| Session delete | native (sidecar `session.delete`) | live matrix + deep |
+| Goal create/pause/resume/clear | adapter (map + system inject) | compat |
+| Host pause / cancel | native (sidecar `turn.cancel`) | live cancel-mid-TOOL + deep timeout |
+| Permission presets | adapter (dsh tool pipeline / ledger) | compat |
+| Session fork | native (sidecar `session.fork`) | live matrix + compat |
+| Schedule / heartbeat | adapter (`agentcore-state` heartbeat) | compat |
+| Memory bridge probe | adapter (`memoryBridge: adapter`; host memory plugins) | compat memory |
+
+### `/jiuwen` subcommands → agent-core
+
+| Subcommand | status | Live-tested |
+|---|---|---|
+| status, models, model, model-info, mode | adapter / config | unit facade |
+| pause, resume, interrupt | native cancel / mapping | live cancel |
+| rename, pin, switch, archive, unarchive, sessions, archived | adapter (session map) | facade |
+| fork, delete, unmap | native / adapter | live + facade |
+| goal, plan-status | adapter | compat |
+| history, compact, btw, recap | native history / adapter compact | facade; history live |
+| skill-toggle, skills, skill-info | adapter (+ host skills) | compat |
+| workflows, teams, agents, templates, bindings | **fallback** (list local; execute needs Gateway) | facade gatewayFallback |
+| tools, hooks, permissions, plugins | adapter (state / empty lists) | facade |
+| projects, path, locale, commands, version, updater | adapter stubs | facade |
+| heartbeat, cron | adapter state | compat schedule |
+| mcp, mcp-reset | adapter local-function verify | mcpVerify live |
+| marketplaces | **fallback** | facade |
+| assets | native-ish (checkpoint + projectDir listing) | facade |
+| help | adapter | unit |
+| supplement, agent | adapter / thin | facade |
+
+### `ctx.jiuwenAdapter.*` / `gateway.*`
+
+| API surface | status | Live-tested |
+|---|---|---|
+| `gateway.history*` / `session*` CRUD | native or adapter | live + facade |
+| `gateway.interrupt` / `chatCancel` / `chatResume` | native / adapter | live cancel |
+| `gateway.models*` / `skills*` / `permissions*` / `plugins*` | adapter | facade |
+| `gateway.heartbeat*` / `goal` / `planStatus` / `compact` | adapter | facade/compat |
+| `gateway.mcpList` / `memory*` / `filesList` | adapter (+ env memory providers) | facade |
+| `gateway.workflows` / `team*` / `skillsMarketplace*` | **fallback** | facade |
+| `mcpVerify` | adapter (`local-function`) | live |
+| `onEvent` / `config` / `backend` / `isAgentCore` | adapter | unit |
+
+### Config options (agent-core-relevant)
+
+| Option | status |
+|---|---|
+| `backend` / `JIUWEN_BACKEND` (default `agent-core`) | native switch |
+| `agentcorePython` / `agentcoreCheckpointDir` | native |
+| `gatewayFallback` (default on) | fallback router |
+| `forwardReasoning` / `emitUsage` / `eventDisplay` | native stream map |
+| `hostSync` + `sync*` flags | adapter (same flags as Gateway) |
+| `gatewayURL` | required for fallback; optional for pure agent-core |
+
+### Totals (feature rows above)
+
+| Bucket | Count |
+|---|---|
+| native | 18 |
+| adapter | 42 |
+| fallback | 6 |
+| missing | 0 (soft-no-op avoided; stubs or fallback) |
+| **Covered without Gateway** (native+adapter) | **60 / 66 ≈ 91%** |
+| **Needs Gateway for full UX** (fallback) | **6 / 66 ≈ 9%** |
+
+Live deep-suite (`scripts/live-agentcore-deep.mjs`, Asia/Shanghai 2026-11-05): **21 PASS / 1 DEGRADED / 0 FAIL**
+(DEGRADED: `edge-invalid-model` before env-override fix). Highlights: 30/30 long turns + history recall;
+6/6 concurrent; checkpointer resume after sidecar kill (PAPAYA42); forced tools; Chinese + long prompt;
+cancel-via-timeout. Latency x8: agent-core avg **9669 ms** (in≈5.8k) vs gateway avg **5112 ms** (in≈28k).
+Fake-model microbench after tool fingerprint skip: turn1 **2460 ms**, turns 2–5 **≈10 ms**.
+
+## What openjiuwen / agent-core provides
+
+Pinned runtime: **`openjiuwen==0.1.20.post1`** (sources `/workspace/agent-core-src/agent-core-v0.1.20.post1`). Develop tree: `/workspace/agent-core-src/agent-core` (pyproject still labels `0.1.20`).
+
+### Capability inventory
+
+| Area | Module path (0.1.20.post1) | Adapter uses now? | Could use later? |
+|---|---|---|---|
+| **DeepAgent factory** | `openjiuwen/harness/factory.py` (`create_deep_agent`) | **yes** — sidecar builds one DeepAgent per dsh session | — |
+| **ReAct / single agent** | `openjiuwen/core/single_agent/` | **yes** (inner `react_agent`) | Direct ReActAgent without DeepAgent harness |
+| **Streaming run** | `openjiuwen/core/runner` (`Runner.run_agent_streaming`) | **yes** | — |
+| **Abort / cancel** | turn task cancel; rails `harness/rails/interrupt/` | **yes** (`turn.cancel`) | ConfirmInterruptRail / ask-user rails |
+| **LocalFunction tools** | `openjiuwen/core/foundation/tool` | **yes** — host `ctx.tools.execute` bridge | — |
+| **MCP servers on agent** | `create_deep_agent(mcps=…)` + `harness/rails/mcp_rail.py` | no (dsh MCP stays on host) | Register selected MCP servers inside sidecar |
+| **Checkpointer / persistence** | `core/session/checkpointer/` (`persistence` sqlite, inmemory, noop) | **yes** — sqlite under `DSH_JIUVEN_AC_DIR` | Cross-host shared DB |
+| **Context engine / compaction** | `core/context_engine/` | **yes** (engine inside DeepAgent; host `/jiuwen compact` clears hash) | Tune compressors / offloaders |
+| **Plan mode** | `harness/rails/agent_mode_rail.py`, `enable_plan_mode` | **yes** | Task-planning rail (`enable_task_planning`) |
+| **Skills** | `harness/skills/`, `core/operator/skill_call` | partial — host skill bodies injected as system text | Native DeepAgent `skills=` paths |
+| **Memory** | `core/memory/` + rails `harness/rails/memory/` (mem0, lakebase, openviking, agentarts, …) | status/env only; host memory plugins | Wire `OPENJIUWEN_MEMORY_ENABLED` / mem0 |
+| **Security rails** | `harness/rails/security/` | **off** (`enable_security_rail=False`) | Opt-in prompt/tool security |
+| **Model anomaly / tool-loop rail** | `harness/rails/model_anomaly_detection_rail.py` | **off** in sidecar (Gateway agentserver may still enforce) | Opt-in with higher thresholds |
+| **Heartbeat rail** | `harness/rails/heartbeat_rail.py` | no — adapter-state heartbeat only | Native heartbeat scheduling |
+| **Sys operation / sandbox** | `extensions/sys_operation/`, `sys_operation_rail` | no — file/bash via dsh tools | Sidecar sandbox for untrusted code |
+| **Multimodal** | vision/audio model configs; `multimodal_*` rails; image window mutator | **yes** — image URLs on turn | Audio / native read_image |
+| **Subagents / task loop** | `harness/subagent*`, `enable_task_loop` | no | Parallel subagents for heavy tasks |
+| **Multi-agent / teams / swarm** | `core/multi_agent/`, `agent_teams/` | list/templates only; **execute → gatewayFallback** | Embed TeamRuntime in sidecar |
+| **Graph / Symphony** | `core/graph/`, `symphony/` | no | Advanced workflows |
+| **LSP / progressive tools / MoA** | `harness/rails/lsp_rail.py`, `progressive_tool_rail.py`, `moa_rail.py` | no | Coding-agent extras |
+| **KV cache** | `core/kv_cache/`, harness kv_cache | no | Latency wins on long sessions |
+| **Evaluation / evolving / RSI** | `agent_evolving/`, `auto_harness/`, `rsi/` | no | Offline eval pipelines |
+| **Observability / OTEL** | `extensions/observability`, `extensions/tracer_otel` | logs only | Full traces |
+| **LLM providers** | `core/foundation/llm` (`ProviderType`: OpenAI, OpenAIAccount, Anthropic, DashScope, OpenRouter, SiliconFlow, …) | **yes** via `Model` + env key | Provider routing / AnthropicMessages |
+| **Parallel tool calls** | `create_deep_agent(parallel_tool_calls=True)` default | inherited | — |
+
+### Develop tree beyond 0.1.20.post1
+
+Notable additions under `/workspace/agent-core-src/agent-core` (not in the pinned wheel):
+
+| Addition | Path |
+|---|---|
+| `jiuwen_memory_rail.py` | `openjiuwen/harness/rails/memory/jiuwen_memory_rail.py` |
+| `web_research_rail.py` | `openjiuwen/harness/rails/web_research_rail.py` |
+| Context cancellation helper | `openjiuwen/core/context_engine/context/cancellation.py` |
+| Logging `invocation.py` | `openjiuwen/core/common/logging/invocation.py` |
+| Agent-teams **experts** + scheduled dispatch prompts/tools | `openjiuwen/agent_teams/experts/`, new prompt/tool locale files |
+| `tool_expert.py`, `swarmflow_infra.py`, `external_swarmflow_host.py` | `openjiuwen/agent_teams/tools/`, `…/workflow/` |
+| Top-level `plugins/medical_kb` | `/workspace/agent-core-src/agent-core/plugins/` |
+| Various rails/memory/progressive_tool/context_engineer edits | diff vs post1 |
+
+The adapter stays on **0.1.20.post1** until a deliberate bump; develop features above are candidates, not dependencies.
+
+### Sidecar performance note
+
+Per-turn `_sync_tools` used to remove+re-add every LocalFunction every turn (costly with large dsh tool sets). It now fingerprints tools/model/system and **skips rebind when unchanged**, emitting `adapter_phase` timings (`ensure_ms`, `tools.skipped`, `set_llm_ms`, …). Remaining multi-turn wall-time gaps vs Gateway are dominated by **model verbosity / prompt assembly**
+(agent-core often narrates before the token; gateway returns exact `LATn_OK`), plus rare outliers
+(e.g. lat-7 = 28 s), not tool re-registration. Fake-model proof: after fingerprint skip, turns 2+ finish in ≈10 ms.

@@ -90,3 +90,30 @@ test('first() empty vals and resolveAgentCoreModel temperature/topP/fake', () =>
     else process.env.AGENTCORE_FAKE_MODEL = prev
   }
 })
+
+test('alias remap prefers AGENTCORE_MODEL / MODEL_NAME env over jiuwen .env', () => {
+  const prevHome = process.env.JIUWEN_HOME
+  const prevAc = process.env.AGENTCORE_MODEL
+  const prevMn = process.env.MODEL_NAME
+  const dir = mkdtempSync(join(tmpdir(), 'jw-env2-'))
+  mkdirSync(join(dir, 'config'), { recursive: true })
+  writeFileSync(join(dir, 'config/.env'), 'API_KEY=sk-x\nAPI_BASE=https://example.test/v1\nMODEL_NAME=from-dotenv\n')
+  process.env.JIUWEN_HOME = dir
+  process.env.AGENTCORE_MODEL = 'env-override-model'
+  try {
+    const m = resolveAgentCoreModel(
+      { defaultModel: 'jiuwen-default', apiKeyEnv: 'JIUWEN_API_KEY' },
+      { model: 'jiuwen-default' },
+      {},
+    )
+    assert.equal(m.model, 'env-override-model')
+  } finally {
+    if (prevHome == null) delete process.env.JIUWEN_HOME
+    else process.env.JIUWEN_HOME = prevHome
+    if (prevAc == null) delete process.env.AGENTCORE_MODEL
+    else process.env.AGENTCORE_MODEL = prevAc
+    if (prevMn == null) delete process.env.MODEL_NAME
+    else process.env.MODEL_NAME = prevMn
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
