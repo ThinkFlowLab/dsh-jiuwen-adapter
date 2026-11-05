@@ -322,7 +322,7 @@ export class AgentCoreTransport {
     const handleToolCall = async (params) => {
       const callId = params.callId
       const name = params.name
-      const args = params.args || {}
+      const args = stripNullishArgs(params.args || {})
       emitEvent({ type: 'tool_call', name, id: callId, arguments: args, raw: params })
       if (this.surfaceToolEvents && this.eventDisplay === 'reasoning' && this.forwardReasoning) {
         const label = `🔧 ${name}(${safeArgs(args)})\n`
@@ -507,6 +507,20 @@ export class AgentCoreTransport {
       signal?.removeEventListener?.('abort', onAbort)
     }
   }
+}
+
+
+/** Drop null/undefined values so dsh JSON-schema validation accepts optional fields.
+ * openjiuwen LocalFunction/SchemaUtils fills omitted optionals with null; dsh rejects null for boolean/number/string.
+ */
+export function stripNullishArgs(args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return args || {}
+  const out = {}
+  for (const [k, v] of Object.entries(args)) {
+    if (v === null || v === undefined) continue
+    out[k] = v
+  }
+  return out
 }
 
 function safeArgs(args) {

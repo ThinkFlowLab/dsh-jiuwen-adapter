@@ -10,6 +10,7 @@ import {
   normalizeTools,
   buildModelSpec,
   extractImageUrls,
+  stripNullishArgs,
 } from '../src/agentcore-transport.js'
 import { resolveConfig } from '../src/config.js'
 import { createJiuwenAdapter } from '../src/adapter.js'
@@ -522,3 +523,13 @@ test('extractImageUrls base64 branch and normalizeTools defaults', () => {
   assert.match(urls[0], /^data:image\/png;base64,zzz$/)
   assert.deepEqual(normalizeTools([{ name: 'only' }])[0].parameters, { type: 'object', properties: {} })
 })
+
+test('stripNullishArgs drops null/undefined optionals', () => {
+  assert.deepEqual(
+    stripNullishArgs({ file_path: '/x', old_string: 'a', new_string: 'b', replace_all: null, sandbox_permissions: null }),
+    { file_path: '/x', old_string: 'a', new_string: 'b' },
+  )
+  assert.deepEqual(stripNullishArgs({ a: 0, b: false, c: '', d: null }), { a: 0, b: false, c: '' })
+  assert.deepEqual(stripNullishArgs(null), {})
+})
+

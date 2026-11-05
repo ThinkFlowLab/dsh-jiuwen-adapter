@@ -249,10 +249,12 @@ class SessionManager:
                 timeout = float(timeout_raw)
             except ValueError:
                 timeout = 120.0
+            # LocalFunction/SchemaUtils fills omitted optionals with None; dsh rejects null.
+            clean_args = {k: v for k, v in kwargs.items() if v is not None}
             try:
                 await self._emit(
                     "tool.call",
-                    {"callId": call_id, "name": name, "args": kwargs, "sid": sid},
+                    {"callId": call_id, "name": name, "args": clean_args, "sid": sid},
                 )
                 try:
                     result = await asyncio.wait_for(fut, timeout=timeout)

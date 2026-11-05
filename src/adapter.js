@@ -357,7 +357,7 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
               if (!aux && deps.goalBridge) {
                 try { const p = deps.goalBridge.observe(dshSessionId, e); if (p) { goalUpdates.add(p); p.finally(() => goalUpdates.delete(p)) } } catch { /* ignore */ }
               }
-              trace({ at: 'event', type: e.type, name: e.name, event: e.event, ...(e.type === 'adapter_phase' ? { phases: e.phases } : {}), ...(e.type === 'interaction_answered' ? { eventType: e.eventType, source: e.source, outcome: e.outcome, raw: JSON.stringify(e.raw).slice(0, 1500) } : {}) })
+              trace({ at: 'event', type: e.type, name: e.name, event: e.event, ...(e.type === 'adapter_phase' ? { phases: e.phases } : {}), ...(e.type === 'tool_call' ? { id: e.id, arguments: e.arguments } : {}), ...(e.type === 'tool_result' ? { id: e.id, success: e.success, result: typeof e.result === 'string' ? e.result.slice(0, 4000) : e.result } : {}), ...(e.type === 'interaction_answered' ? { eventType: e.eventType, source: e.source, outcome: e.outcome, raw: JSON.stringify(e.raw).slice(0, 1500) } : {}) })
               try { overrides.onEvent?.(e) } catch { /* ignore */ }
               try { deps.onEvent?.({ dshSessionId, ...e }) } catch { /* ignore */ }
             },

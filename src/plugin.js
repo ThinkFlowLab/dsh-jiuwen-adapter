@@ -213,28 +213,30 @@ export function apply(ctx, config = {}) {
       const agents = service('agents')
       let agent
       try { agent = agents?.get?.(info.dshSessionId || info.sessionId) } catch { agent = undefined }
+      // openjiuwen SchemaUtils fills omitted optionals with null; dsh schemas reject null.
+      const cleanArgs = stripNullishToolArgs(args)
       const runtime = tools && typeof tools.execute === 'function' ? tools : (agent?.ctx?.tools && typeof agent.ctx.tools.execute === 'function' ? agent.ctx.tools : null)
       if (runtime) {
         const exec = {
           callId: info.callId || `ac-${Date.now()}`,
           name,
-          arguments: args ?? {},
+          arguments: cleanArgs,
           agent,
           signal: info.signal,
         }
         const result = await runtime.execute(exec)
         if (result?.isError) {
-          const err = new Error(typeof result.text === 'string' ? result.text : `tool ${name} failed`)
+          const err = new Error(toolResultText(result) || `tool ${name} failed`)
           err.isError = true
           throw err
         }
-        return result?.text ?? result?.content ?? result
+        return toolResultText(result) ?? result?.content ?? result
       }
       // Legacy: direct definition execute
       let def
       try { def = agent ? tools?.get?.(name, agent) : tools?.get?.(name) } catch { def = undefined }
       if (!def?.execute) throw new Error(`dsh tool ${name} not found`)
-      return def.execute(args ?? {}, { callId: info.callId, name, arguments: args ?? {}, agent, signal: info.signal })
+      return def.execute(cleanArgs, { callId: info.callId, name, arguments: cleanArgs, agent, signal: info.signal })
     },
   })
   const modelDiscovery = createModelDiscovery({ gateway: () => gatewayFor(), config: readConfig })
@@ -564,3 +566,29 @@ export function hasQuestionAnswerer(ctx) {
     return Array.isArray(h) ? h.length > 0 : Boolean(h && (h.size ?? Object.keys(h).length))
   } catch { return true }
 }
+
+/** Drop null/undefined tool args (openjiuwen fills optionals with null; dsh rejects). */
+function stripNullishToolArgs(args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return args && typeof args === 'object' ? args : {}
+  const out = {}
+  for (const [k, v] of Object.entries(args)) {
+    if (v === null || v === undefined) continue
+    out[k] = v
+  }
+  return out
+}
+
+/** dsh tool results use content[].text (and sometimes error.message), not top-level .text. */
+function toolResultText(result) {
+  if (!result || typeof result !== 'object') return undefined
+  if (typeof result.text === 'string' && result.text) return result.text
+  if (typeof result.error?.message === 'string' && result.error.message) return result.error.message
+  if (Array.isArray(result.content)) {
+    const parts = result.content
+      .filter((b) => b && b.type === 'text' && typeof b.text === 'string')
+      .map((b) => b.text)
+    if (parts.length) return parts.join('\n')
+  }
+  return undefined
+}
+

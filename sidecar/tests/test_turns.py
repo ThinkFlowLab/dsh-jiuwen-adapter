@@ -383,3 +383,62 @@ async def test_model_error_surfaces(ckpt_dir, writer, fake, monkeypatch):
                 assert "sk-SHOULDNOTLEAK12345678" not in json.dumps(r)
         finally:
             await h.stop()
+
+
+ECHO_WITH_OPTIONAL = {
+    "name": "dsh_echo",
+    "description": "Echo via dsh",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "text": {"type": "string"},
+            "flag": {"type": "boolean"},
+        },
+        "required": ["text"],
+    },
+}
+
+
+@pytest.mark.asyncio
+async def test_tool_args_strip_none_optionals(ckpt_dir, writer, fake):
+    """SchemaUtils fills omitted optionals with None; emit must drop them for dsh."""
+    fake.reset_script(
+        [
+            AssistantMessage(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        type="function",
+                        name="dsh_echo",
+                        arguments=json.dumps({"text": "hi"}),
+                    )
+                ],
+            ),
+            AssistantMessage(content="done"),
+        ]
+    )
+    h = RpcHarness(
+        ckpt_dir,
+        writer,
+        tool_handler=lambda p: {"ok": True, "content": {"echo": (p.get("args") or {}).get("text", "").upper()}},
+    )
+    await h.start()
+    try:
+        r = await h.call(
+            "turn.start",
+            {
+                "sid": "s-null",
+                "query": "call the tool",
+                "tools": [ECHO_WITH_OPTIONAL],
+                "model": FAKE_MODEL,
+            },
+        )
+        assert r["result"]["ok"] is True
+        assert h.tool_calls()
+        args = h.tool_calls()[0]["args"]
+        assert args.get("text") == "hi"
+        assert "flag" not in args  # None stripped
+        assert all(v is not None for v in args.values())
+    finally:
+        await h.stop()
