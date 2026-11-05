@@ -34,3 +34,8 @@ sidecar/.pytest_cache/
 sidecar/coverage.xml
 .coverage
 htmlcov/
+
+# Local agent-core checkpoints from live runs
+jiuwen-adapter/
+
+reports/live-agentcore-matrix.json

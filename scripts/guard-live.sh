@@ -13,6 +13,7 @@
 #   STANDIN_PORT (18999), GUARD_LOG_DIR (/workspace/guard-logs), GUARD_PROTECT_PORTS ("3335": FlyBot demo, never touched),
 #   GUARD_SKIP_SMOKE=1 (never run the real-model smoke), LEAK_TURNS (200).
 #   GUARD_ONLY=live|plain-dsh (run one suite only; the summary is marked partial and the run never counts as a full PASS).
+#   GUARD_BACKEND=agent-core|gateway|both (default agent-core). Sets JIUWEN_BACKEND for plain-dsh / live; `both` runs plain-dsh twice.
 # Internal subcommands used as JW_USE_STANDIN_CMD / JW_RESTORE_CMD / GW_KILL / GW_START: __use-standin, __restore-real,
 #   __gw-kill, __gw-start (need GUARD_SNAP).
 set -uo pipefail
@@ -147,12 +148,31 @@ run_suite() { # name logfile env...
 LIVE_ENV=(LIVE_LOG_DIR="$RUN_DIR/live" LEAK_TURNS="${LEAK_TURNS:-200}" GW_KILL="bash '$SELF' __gw-kill" GW_START="bash '$SELF' __gw-start" DSH_BIN=)
 [ "$SMOKE" = run ] && LIVE_ENV+=(LIVE_SMOKE=1)
 ONLY=${GUARD_ONLY:-}
+BACKEND=${GUARD_BACKEND:-agent-core}
 case $ONLY in ""|live|plain-dsh) ;; *) log "GUARD_ONLY must be live or plain-dsh"; exit 2 ;; esac
+case $BACKEND in agent-core|gateway|both|agentcore|ac) ;; *) log "GUARD_BACKEND must be agent-core|gateway|both"; exit 2 ;; esac
+[ "$BACKEND" = agentcore ] || [ "$BACKEND" = ac ] && BACKEND=agent-core
 skipped_suite() { printf 'SKIP  %s (GUARD_ONLY=%s)\n' "$1" "$ONLY" > "$2"; log "skip $1 (GUARD_ONLY=$ONLY)"; }
 if [ "$ONLY" = plain-dsh ]; then skipped_suite test:live "$RUN_DIR/test-live.log"; LIVE_RC=0
-else run_suite test:live "$RUN_DIR/test-live.log" "${LIVE_ENV[@]}"; LIVE_RC=$?; fi
-if [ "$ONLY" = live ]; then skipped_suite test:plain-dsh "$RUN_DIR/test-plain-dsh.log"; PLAIN_RC=0
-else run_suite test:plain-dsh "$RUN_DIR/test-plain-dsh.log" DSH_BIN="$DSH_BIN"; PLAIN_RC=$?; fi
+else run_suite test:live "$RUN_DIR/test-live.log" "${LIVE_ENV[@]}" JIUWEN_BACKEND="${BACKEND%%,*}"; LIVE_RC=$?; fi
+PLAIN_RC=0
+PLAIN_AC_RC=0
+PLAIN_GW_RC=0
+run_plain() { # backend logfile
+  local be=$1 out=$2
+  run_suite test:plain-dsh "$out" DSH_BIN="$DSH_BIN" JIUWEN_BACKEND="$be"
+}
+if [ "$ONLY" = live ]; then
+  skipped_suite test:plain-dsh "$RUN_DIR/test-plain-dsh.log"; PLAIN_RC=0
+elif [ "$BACKEND" = both ]; then
+  run_plain agent-core "$RUN_DIR/test-plain-dsh-agent-core.log"; PLAIN_AC_RC=$?
+  run_plain gateway "$RUN_DIR/test-plain-dsh-gateway.log"; PLAIN_GW_RC=$?
+  PLAIN_RC=0; [ $PLAIN_AC_RC = 0 ] || PLAIN_RC=$PLAIN_AC_RC; [ $PLAIN_GW_RC = 0 ] || PLAIN_RC=$PLAIN_GW_RC
+  # Keep a combined alias for summary parsers
+  { echo "=== agent-core ==="; cat "$RUN_DIR/test-plain-dsh-agent-core.log"; echo "=== gateway ==="; cat "$RUN_DIR/test-plain-dsh-gateway.log"; } > "$RUN_DIR/test-plain-dsh.log"
+else
+  run_plain "$BACKEND" "$RUN_DIR/test-plain-dsh.log"; PLAIN_RC=$?
+fi
 
 # 5. restore + verify
 [ -n "$STANDIN_PID" ] && { kill -- -"$STANDIN_PID" 2>/dev/null; STANDIN_PID=; }

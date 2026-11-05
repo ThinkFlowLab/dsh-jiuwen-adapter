@@ -7,7 +7,7 @@ Precedence: **environment variable > Cordis plugin config > default** (`provider
 | `provider` | — | `jiuwen` | Provider id registered on `ctx.llm` |
 | `displayName` | — | `JiuwenSwarm` | `providerInfo().name` |
 | `mode` | `JIUWEN_MODE` | `gateway` | `gateway` (product, Jiuwen brain) / `openai` (diagnostics; aliases `llm`, `completions`) |
-| `backend` | `JIUWEN_BACKEND` | `gateway` | When `mode=gateway`: `gateway` (Jiuwen WS) or `agent-core` (local sidecar). Default stays gateway. |
+| `backend` | `JIUWEN_BACKEND` | `agent-core` | When `mode=gateway`: `agent-core` (local sidecar, default) or `gateway` (Jiuwen WS). |
 | `gatewayURL` | `JIUWEN_GATEWAY_URL` | `ws://127.0.0.1:19000/ws` | Gateway WebSocket |
 | `baseURL` | `JIUWEN_BASE_URL` | `http://127.0.0.1:18080/v1` | OpenAI-compatible root (openai mode only) |
 | `apiKey` | `JIUWEN_API_KEY` or `$apiKeyEnv` | — | Bearer key for openai mode |

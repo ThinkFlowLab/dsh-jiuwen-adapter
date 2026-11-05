@@ -58,11 +58,11 @@ export function resolveConfig(raw = {}, opts = {}) {
   const mode = modeRaw === 'openai' || modeRaw === 'llm' || modeRaw === 'completions'
     ? 'openai'
     : 'gateway'
-  // Product brain backend when mode=gateway: classic Jiuwen Gateway WS, or local agent-core sidecar.
-  const backendRaw = String(env.JIUWEN_BACKEND || raw.backend || 'gateway').toLowerCase()
-  const backend = (backendRaw === 'agent-core' || backendRaw === 'agentcore' || backendRaw === 'ac')
-    ? 'agent-core'
-    : 'gateway'
+  // Product brain backend when mode=gateway: local agent-core sidecar (default), or classic Jiuwen Gateway WS.
+  const backendRaw = String(env.JIUWEN_BACKEND || raw.backend || 'agent-core').toLowerCase()
+  const backend = (backendRaw === 'gateway' || backendRaw === 'gw' || backendRaw === 'ws')
+    ? 'gateway'
+    : 'agent-core'
 
   const apiKeyEnv = String(raw.apiKeyEnv || 'JIUWEN_API_KEY')
   const apiKey = firstNonEmpty(
@@ -104,7 +104,7 @@ export function resolveConfig(raw = {}, opts = {}) {
     /** ctx service name for the helper API (ctx.jiuwenAdapter). */
     serviceName: String(raw.serviceName || 'jiuwenAdapter'),
     mode,
-    /** gateway (default) | agent-core — which product backend mode=gateway uses. */
+    /** agent-core (default) | gateway — which product backend mode=gateway uses. */
     backend,
     brainOwnership: 'jiuwen',
     baseURL: stripTrailingSlash(String(

@@ -83,7 +83,7 @@ test('buildModelSpec forwards temperature / max_tokens / top_p', () => {
   if (prev !== undefined) process.env.AGENTCORE_FAKE_MODEL = prev
 })
 
-test('hostSync agent-core: delete/fork/pause use agentcore; skills/mcp soft-skip', async () => {
+test('hostSync agent-core: delete/fork/pause use agentcore; skills/title/mcp native', async () => {
   const listeners = {}
   const ctx = {
     on(ev, fn) { (listeners[ev] ||= []).push(fn); return () => {} },

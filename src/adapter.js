@@ -372,11 +372,31 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
               if (!aux) { try { deps.onEvent?.({ dshSessionId, type: 'turn_end', sessionId: turnMapping.jiuwenSessionId, requestId: info.requestId, reason: info.reason }) } catch { /* ignore */ } }
             },
           }
+          if (useAgentCore) {
+            // Migration: mapping created under Gateway keeps working as a new sidecar session
+            // (checkpointer is empty → history starts fresh). Surface once per session.
+            if ((turnMapping.turns || 0) > 0 && turnMapping.backendOrigin === 'gateway' && !turnMapping.backendMigratedNote) {
+              deps.logger?.warn?.(`[dsh-jiuwen] session ${dshSessionId} was started on Gateway; agent-core continues with a fresh sidecar history (set backend: gateway to keep Gateway state)`)
+              try { deps.sessions.update?.(dshSessionId, { backendMigratedNote: true }) } catch { /* ignore */ }
+            }
+            if (!turnMapping.backendOrigin) {
+              try { deps.sessions.update?.(dshSessionId, { backendOrigin: 'agent-core' }) } catch { /* ignore */ }
+            }
+          }
+          if (!useAgentCore && !turnMapping.backendOrigin) {
+            try { deps.sessions.update?.(dshSessionId, { backendOrigin: 'gateway' }) } catch { /* ignore */ }
+          }
+          let acSystem = options.system
+          if (useAgentCore && turnMapping.goal?.objective) {
+            const g = turnMapping.goal
+            const goalBlock = `[Active goal — phase=${g.phase || 'active'}]\n${g.objective}\n[/Active goal]`
+            acSystem = acSystem ? `${goalBlock}\n\n${acSystem}` : goalBlock
+          }
           const gwStream = useAgentCore
             ? this._agentcoreTransport().stream(request, turnMapping, {
                 ...turnHooks,
                 tools: hostTools,
-                system: options.system,
+                system: acSystem,
                 model: {
                   provider: process.env.AGENTCORE_FAKE_MODEL === '1' ? 'fake' : (overrides.modelProvider || 'OpenAI'),
                   api_base: String(cfg.baseURL || 'http://127.0.0.1:9/v1'),

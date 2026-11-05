@@ -26,7 +26,7 @@ function host(config = {}) {
     logger: { info() {}, warn() {}, error() {} },
     provide(n, v) { this[n] = v }, on() {},
   }
-  plugin.apply(ctx, { gatewayURL: URL_, mappingPath: join(dir, `m-${Math.random()}.json`), finalGraceMs: 300, ...config })
+  plugin.apply(ctx, { backend: 'gateway', gatewayURL: URL_, mappingPath: join(dir, `m-${Math.random()}.json`), finalGraceMs: 300, ...config })
   const a = adapters.get('jiuwen')
   return {
     api: ctx.jiuwenAdapter,

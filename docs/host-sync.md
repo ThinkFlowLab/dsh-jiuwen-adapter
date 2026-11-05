@@ -49,14 +49,5 @@ See [configuration.md](./configuration.md). Env: `JIUWEN_HOST_SYNC`, `JIUWEN_SYN
 
 ## agent-core backend
 
-With `backend: agent-core` the same hostSync flags apply, but Gateway RPCs that have no sidecar equivalent soft-no-op (logged at debug). Session-map paths still take effect on the next turn.
+With `backend: agent-core` (the default) the same hostSync flags apply. Gateway RPCs are served by the sidecar + session map + `agentcore-state.json` (see [agent-core.md](./agent-core.md#parity-checklist)). Host tools use LocalFunction → `ctx.tools.execute` (dsh permissions / auto-review apply natively).
 
-| Host change | agent-core behavior |
-|---|---|
-| Model / cwd / plan mode | Session map → next `turn.start` (`set_llm`, `cwd`, `plan`) |
-| System / tools / temperature / max_tokens / top_p | Passed every `turn.start`; `prompt_mode=none` when host system is set (no DeepAgent identity stack) |
-| Session delete / fork / pause | Sidecar `session.delete` / `session.fork` / `cancel` |
-| Title rename | Mapping-only (no `session.rename`) |
-| Skills / MCP / permissions / schedule / goal / memory | Soft no-op (tools via LocalFunction; no Gateway skills/mcp/permissions) |
-
-See [agent-core.md](./agent-core.md#hostsync-parity).

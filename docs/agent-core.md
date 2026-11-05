@@ -94,7 +94,7 @@ speaks the NDJSON-RPC above. Select it with:
 
 ```yaml
 # cordis / plugin config
-backend: agent-core   # default: gateway
+backend: agent-core   # default (opt out with backend: gateway)
 # or env JIUWEN_BACKEND=agent-core
 ```
 
@@ -132,12 +132,48 @@ Frontend-changeable settings that apply in jiuwen sessions (see [host-sync.md](.
 | Plan mode | `enable_plan_mode` + `default_mode=plan` when chatMode is `agent.plan` |
 | Delete / fork / pause | Sidecar RPCs |
 
-### Not feasible (clear degrade)
 
-| Area | Why |
-|---|---|
-| MCP passthrough (`toolPassthrough: mcp`) | agent-core uses LocalFunction → `ctx.tools.execute`; MCP bridge is skipped |
-| Gateway skills.* / permissions.* / heartbeat / goal / memory.* / plugins.* | No Gateway; `/jiuwen` and `ctx.jiuwenAdapter.gateway.*` throw `UNSUPPORTED` with `backend: agent-core` |
-| session.rename / pin / archive / switch | No sidecar equivalent; title stays on the dsh mapping only |
+## Parity checklist
 
-`ctx.jiuwenAdapter.gateway.supports(method)` returns true only for history/session delete|fork|interrupt|models.list on agent-core. Default backend remains **gateway** until you set `backend: agent-core` or `JIUWEN_BACKEND=agent-core`.
+Every Gateway-backed feature has a native agent-core implementation (sidecar RPC, session map, or `agentcore-state.json`). Soft-no-op is not used.
+
+| Feature | Gateway | agent-core | Unit / compat test | Live |
+|---|---|---|---|---|
+| Model switch | session map → chat.send | session map → `set_llm` / turn model | host-sync + agentcore-transport | live matrix |
+| System prompt | injectSystem + chat.send | `prompt_mode=none` + turn system | sidecar prompt_mode test | live |
+| Tools add/remove | MCP passthrough | LocalFunction → `ctx.tools.execute` | agentcore tool round-trip | live |
+| Reasoning / thinking | forwardReasoning | sidecar reasoning events | agentcore-transport | live |
+| Temperature / limits | chat.send extras | ModelRequestConfig | buildModelSpec + sidecar | live |
+| Plan mode | planBridge / chatMode | `enable_plan_mode` + mapping | compat dsh-plan-mode | live |
+| Skills enable + bodies | skills.toggle + inject | mapping skillBodies + inject | compat dsh-skill | live |
+| MCP / host tools | mcp.register + proxy | LocalFunction (`mcpMode: local-function`) | mcpList facade + tools | live |
+| Permissions presets | permissions.tools.update | agentcore-state + dsh tool pipeline | compat permission/auto-review | live |
+| Session delete | session.delete | sidecar session.delete | host-sync + facade | live |
+| Session fork | session.fork | sidecar session.fork | compat fork | live |
+| Pause / cancel | chat.interrupt | sidecar cancel | agentcore cancel | live |
+| Resume | chat.resume | mapping `paused=false` (next turn continues) | facade chatResume | live |
+| Title rename | session.rename | session map title | compat session-title | live |
+| Pin / archive / switch | session.* | session map flags | facade session* tests | live |
+| Goal | command.goal | session map goal + system inject | compat dsh-goal + facade | live |
+| Schedule / heartbeat | heartbeat.set_conf | agentcore-state heartbeat | compat dsh-schedule | live |
+| Memory bridge | memory.status | mapping `memoryBridge: adapter` (+ host memory plugins via messages) | compat memory + facade | live |
+| Plugins list/toggle | plugins.* | agentcore-state plugins | facade plugins* | /jiuwen plugins |
+| Compact | command.compact | clear systemHash / reinject | facade compact | /jiuwen compact |
+| Models list/get | models.* | config.models | facade modelsList | /jiuwen models |
+| History | history.get | sidecar session.history | agentcore history | live |
+| `/jiuwen` + `ctx.jiuwenAdapter.gateway.*` | GatewayTransport | `createAgentCoreFacade` | agentcore-facade.test.js | live |
+| Auto-review | dsh plugin on tool pipeline | same (tools via `ctx.tools.execute`) | compat auto-review | live |
+
+### Migration (Gateway → agent-core)
+
+Existing `session-map.json` entries keep their `jiuwenSessionId`. On first agent-core turn the sidecar checkpointer is empty, so **history starts fresh** for that id; a one-time warning is logged (`backendOrigin: gateway` → migrated note). To keep Gateway history, set `backend: gateway`. New sessions record `backendOrigin: agent-core|gateway`.
+
+### Genuinely out of scope (needs Gateway product / not adapter-replicable)
+
+| Item | Reason | Workaround |
+|---|---|---|
+| Jiuwen Swarm workflows / team runtime | Requires Gateway agentserver graph runner | `backend: gateway` for swarm turns |
+| Jiuwen hub skill marketplace install | Remote hub APIs on Gateway only | Use host dsh skills (bodies injected) |
+| Jiuwen session assets browser (`session.assets.list`) | Gateway FS index; sidecar workspace is local | Host file tools / workspace path |
+| Cross-process Jiuwen memory engine (mem0/lakebase server) | External memory service wired through Gateway | Host memory plugins (agent-instructions, session-reference, session-search) |
+

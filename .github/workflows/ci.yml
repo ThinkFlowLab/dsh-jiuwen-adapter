@@ -41,6 +41,12 @@ jobs:
         run: npm run lint
       - name: npm test
         run: npm test
+      - name: Agent-core Node suite (fake sidecar)
+        run: npm run test:agentcore
+      - name: Sidecar pytest (≥90% coverage)
+        run: |
+          python3 -m pip install -q -U pip
+          npm run test:sidecar
       - name: Coverage + test-count baseline
         run: npm run test:coverage
       - name: Live suites skip cleanly without JIUWEN_LIVE

@@ -54,10 +54,11 @@ test('normalizeTools / buildModelSpec / extractImageUrls helpers', () => {
   assert.equal(urls[0], 'data:image/png;base64,xx')
 })
 
-test('config backend defaults to gateway; agent-core via config/env', () => {
-  assert.equal(resolveConfig({}, { env: {} }).backend, 'gateway')
-  assert.equal(resolveConfig({ backend: 'agent-core' }, { env: {} }).backend, 'agent-core')
-  assert.equal(resolveConfig({}, { env: { JIUWEN_BACKEND: 'agentcore' } }).backend, 'agent-core')
+test('config backend defaults to agent-core; gateway via config/env', () => {
+  assert.equal(resolveConfig({}, { env: {} }).backend, 'agent-core')
+  assert.equal(resolveConfig({ backend: 'gateway' }, { env: {} }).backend, 'gateway')
+  assert.equal(resolveConfig({}, { env: { JIUWEN_BACKEND: 'gateway' } }).backend, 'gateway')
+  assert.equal(resolveConfig({}, { env: { JIUWEN_BACKEND: 'gw' } }).backend, 'gateway')
 })
 
 test('spawn/ready ping via fake sidecar', async () => {
@@ -276,7 +277,7 @@ test('fork / delete / history', async () => {
   }
 })
 
-test('adapter backend=agent-core uses agentcore transport; default stays gateway', async () => {
+test('adapter backend=agent-core uses agentcore transport; gateway opt-in', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'ac-ad-'))
   const mappingPath = join(dir, 'map.json')
   let agentcoreUsed = false
@@ -318,8 +319,8 @@ test('adapter backend=agent-core uses agentcore transport; default stays gateway
   assert.match(out.filter((c) => c.type === 'text-delta').map((c) => c.text).join(''), /via-ac/)
   assert.equal(out.at(-1).reason.kind, 'stop')
 
-  // default backend: gateway path (fake gateway transport)
-  const cfgGw = resolveConfig({ mode: 'gateway', mappingPath, titleMode: 'local', injectSystem: 'off', toolPassthrough: 'off' }, { env: {} })
+  // explicit gateway backend
+  const cfgGw = resolveConfig({ mode: 'gateway', backend: 'gateway', mappingPath, titleMode: 'local', injectSystem: 'off', toolPassthrough: 'off' }, { env: {} })
   assert.equal(cfgGw.backend, 'gateway')
   let gwUsed = false
   const Adapter2 = createJiuwenAdapter(null, {

@@ -110,7 +110,7 @@ test('reload: 3× apply → turn → dispose leaves no exit listeners, handles o
   for (let i = 0; i < 3; i++) {
     const hooks = {}; let a
     const ctx = { llm: { registerAdapter(ids, ad) { a = ad; live++; return () => { live-- } } }, logger: { info() {}, warn() {}, error() {}, debug() {} }, provide(n, v) { this[n] = v }, get() {}, on(n, fn) { (hooks[n] ||= []).push(fn); return () => {} } }
-    apply(ctx, { gatewayURL: mock.url, mappingPath: join(mock.dir, `reload-${i}.json`), finalGraceMs: 50 })
+    apply(ctx, { backend: 'gateway', gatewayURL: mock.url, mappingPath: join(mock.dir, `reload-${i}.json`), finalGraceMs: 50 })
     const cs = []; for await (const c of a.stream({ provider: 'jiuwen', model: 'jiuwen-default', sessionId: `rl${i}`, messages: u(`TAG:rl${i} x`) })) cs.push(c)
     assert.equal(cs.at(-1).reason.kind, 'stop')
     for (const fn of hooks.dispose || []) await fn()

@@ -13,7 +13,9 @@ import { createJiuwenAdapter } from './adapter.js'
 import { createToolBridge } from './tool-bridge.js'
 import { GatewayTransport } from './gateway-transport.js'
 import { AgentCoreTransport } from './agentcore-transport.js'
-import { wrapGatewayApiForBackend, isAgentCoreBackend } from './agentcore-api.js'
+import { isAgentCoreBackend } from './agentcore-api.js'
+import { createAgentCoreFacade, bindAgentCoreFacade } from './agentcore-facade.js'
+import { createAgentCoreState, statePathFromMapping } from './agentcore-state.js'
 import { createInteractor } from './interaction.js'
 import { createBusyRegistry } from './busy-interrupt.js'
 import { createMcpBridge } from './mcp-bridge.js'
@@ -248,6 +250,19 @@ export function apply(ctx, config = {}) {
       pythonPath: c.agentcorePython, checkpointDir: c.agentcoreCheckpointDir, logger,
     })
   }
+  const acState = createAgentCoreState(statePathFromMapping(readConfig().mappingPath))
+  const acFacade = createAgentCoreFacade({
+    sessions,
+    getConfig: readConfig,
+    getAgentcore: agentcoreFor,
+    state: acState,
+    getHostServices: () => ({
+      skills: service('skills'),
+      planMode: service('planMode'),
+      agents: service('agents'),
+    }),
+    logger,
+  })
     const gatewayFor = () => {
     const c = readConfig()
     const t = new GatewayTransport({
@@ -274,7 +289,12 @@ export function apply(ctx, config = {}) {
     sessions,
     bridge,
     /** Verify the dsh-tools passthrough registration on the Gateway (mcp.show; never throws). */
-    mcpVerify: (sessionId) => mcpBridge.verify(sessionId),
+    mcpVerify: async (sessionId) => {
+      if (isAgentCoreBackend(readConfig())) {
+        return { ok: true, mode: 'local-function', serverName: readConfig().mcpServerName || 'dsh-tools', sessionId }
+      }
+      return mcpBridge.verify(sessionId)
+    },
     config: readConfig,
     provider: cfg.provider,
     /** Subscribe to structured Jiuwen events ({type, name, ...}); returns unsubscribe. */
@@ -365,19 +385,8 @@ export function apply(ctx, config = {}) {
       workflows: (sid, action, extra) => gatewayFor().workflows(jw(sid), action, extra),
     },
   }
-  api.gateway = wrapGatewayApiForBackend(api.gateway, {
-    getConfig: readConfig,
-    getAgentcore: agentcoreFor,
-    modelsFromConfig: () => {
-      const c = readConfig()
-      const models = (c.models || []).map((m) => ({
-        model_name: m.modelName || m.id,
-        model_id: m.id,
-        ...(m.provider ? { model_provider: m.provider } : {}),
-      }))
-      return { models, active_model: c.defaultModel || models[0]?.model_name || null }
-    },
-  })
+  api.gateway = bindAgentCoreFacade(api.gateway, acFacade, readConfig)
+  api.agentcoreState = acState
   api.backend = () => readConfig().backend || 'gateway'
   api.isAgentCore = () => isAgentCoreBackend(readConfig())
   exposeService(ctx, cfg.serviceName, api, logger)
@@ -488,7 +497,9 @@ export function apply(ctx, config = {}) {
     }
     if (cfg.hostSync !== false) {
       disposers.push(hostSync = installHostSync({
-        ctx, config: readConfig, sessions, gateway: gatewayFor, agentcore: agentcoreFor, logger, mcpBridge, permLedger,
+        ctx, config: readConfig, sessions, gateway: gatewayFor, agentcore: agentcoreFor,
+        agentcoreRpc: (method, params) => acFacade.rpc(method, params),
+        logger, mcpBridge, permLedger,
         services: () => ({
           skills: service('skills'),
           planMode: service('planMode'),

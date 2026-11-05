@@ -45,7 +45,7 @@ test('compat: coexists with deepseek + built-in commands; hostSync off changes n
   const h = cordisLikeHost()
   const snapshot = { providers: [...h.adapters.keys()], cmds: [...h.commands.keys()], dm: { ...h.ctx.llm.defaultModel } }
   // Explicitly disable host sync + sessionSync so this case matches the old "flags off" contract.
-  plugin.apply(h.ctx, { gatewayURL: mock.url, mappingPath: join(mock.dir, 'compat.json'), hostSync: false, sessionSync: false, planBridge: false })
+  plugin.apply(h.ctx, { backend: 'gateway', gatewayURL: mock.url, mappingPath: join(mock.dir, 'compat.json'), hostSync: false, sessionSync: false, planBridge: false })
   assert.deepEqual([...h.adapters.keys()], [...snapshot.providers, 'jiuwen'])
   assert.deepEqual([...h.commands.keys()], [...snapshot.cmds, 'jiuwen'])
   assert.deepEqual(h.ctx.llm.defaultModel, snapshot.dm) // never sets default model
@@ -67,7 +67,7 @@ test('compat: coexists with deepseek + built-in commands; hostSync off changes n
 
 test('compat: all P3 flags on still leave non-jiuwen sessions alone', async () => {
   const h = cordisLikeHost()
-  plugin.apply(h.ctx, { gatewayURL: mock.url, mappingPath: join(mock.dir, 'compat2.json'), sessionSync: true, planBridge: true, typedEvents: true, modelDiscovery: true })
+  plugin.apply(h.ctx, { backend: 'gateway', gatewayURL: mock.url, mappingPath: join(mock.dir, 'compat2.json'), sessionSync: true, planBridge: true, typedEvents: true, modelDiscovery: true })
   h.ctx.emit('session/created', { id: 'ds-2', header: { config: { provider: 'deepseek' } } })
   h.ctx.emit('session/disposed', { id: 'ds-2' })
   assert.equal(h.services.get('jiuwenAdapter').sessions.get('ds-2'), undefined)
@@ -79,12 +79,12 @@ test('compat: duplicate /jiuwen command and duplicate service do not crash; comm
   const h = cordisLikeHost()
   h.ctx.inject(['commands'], c => c.commands.register({ name: 'jiuwen', handler: async () => ({ kind: 'success', text: 'other plugin' }) }))
   h.services.set('jiuwenAdapter', { other: true })
-  assert.doesNotThrow(() => plugin.apply(h.ctx, { gatewayURL: mock.url, mappingPath: join(mock.dir, 'compat3.json') }))
+  assert.doesNotThrow(() => plugin.apply(h.ctx, { backend: 'gateway', gatewayURL: mock.url, mappingPath: join(mock.dir, 'compat3.json') }))
   assert.ok(h.errors.some(e => /could not register \/jiuwen/.test(e)))
   assert.ok(h.errors.some(e => /could not provide ctx\.jiuwenAdapter/.test(e)))
   assert.deepEqual(h.services.get('jiuwenAdapter'), { other: true })
   // second instance with its own namespace: needs its own provider id too
-  assert.doesNotThrow(() => plugin.apply(h.ctx, { gatewayURL: mock.url, mappingPath: join(mock.dir, 'compat4.json'), provider: 'jiuwen2', commandName: 'jiuwen2', serviceName: 'jiuwenAdapter2' }))
+  assert.doesNotThrow(() => plugin.apply(h.ctx, { backend: 'gateway', gatewayURL: mock.url, mappingPath: join(mock.dir, 'compat4.json'), provider: 'jiuwen2', commandName: 'jiuwen2', serviceName: 'jiuwenAdapter2' }))
   assert.ok(h.commands.has('jiuwen2'))
   assert.ok(h.services.has('jiuwenAdapter2'))
 })

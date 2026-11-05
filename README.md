@@ -45,7 +45,7 @@ Step-by-step guide for Mac and Linux: **[docs/quickstart.md](./docs/quickstart.m
 
 | | What you get | Default |
 |---|---|---|
-| 🧠 **Jiuwen brain** | One dsh turn is one Gateway `chat.send`. Agents, team mode, skills and memory run in Jiuwen | on |
+| 🧠 **Jiuwen brain** | Default **agent-core** sidecar (local DeepAgent); opt into Gateway with `backend: gateway` | on |
 | 💬 **Live activity** | Reasoning, 🔧 tool calls, subtasks and token usage stream into dsh | on |
 | ✅ **dsh approvals and questions** | Jiuwen permission prompts, plan approval and `ask_user` go through dsh's own dialogs, and deny when no answer comes | on |
 | 🔁 **Session continuity** | dsh sessions map to Jiuwen sessions. Only new text is sent after the first turn | on |

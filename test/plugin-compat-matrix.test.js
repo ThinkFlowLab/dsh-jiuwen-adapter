@@ -48,11 +48,19 @@ function rig(order, backend = 'gateway') {
     sessionDelete: async (sid) => { acCalls.push(['delete', sid]); return {} },
     sessionFork: async (from, to) => { acCalls.push(['fork', from, to]); return { session_id: to } },
   })
+  const agentcoreRpc = async (method, params) => {
+    calls.push([method, params])
+    if (method === 'heartbeat.set_conf') return { every: params.every }
+    if (method === 'command.goal') return { ok: true }
+    if (method === 'permissions.tools.update') return { ok: true }
+    if (method === 'permissions.tools.get') return { tools: {} }
+    return { ok: true }
+  }
   if (order === 'adapter-last') live = S.svc
   const hs = installHostSync({
     ctx,
-    config: () => ({ provider: 'jiuwen', backend, hostSync: true, models: [{ id: 'jiuwen-default' }] }),
-    sessions, gateway: () => g, agentcore: ac, logger: {}, services: () => live,
+    config: () => ({ provider: 'jiuwen', backend, hostSync: true, models: [{ id: 'jiuwen-default' }], skillSyncMax: 20, skillBodyMaxChars: 4000 }),
+    sessions, gateway: () => g, agentcore: ac, agentcoreRpc, logger: {}, services: () => live,
   })
   const plan = createPlanBridge({ services: () => live, gateway: () => g, sessions, logger: {}, debounceMs: 1 })
   if (order === 'adapter-first') live = S.svc
@@ -101,21 +109,20 @@ for (const order of ['adapter-last', 'adapter-first']) {
 // ── agent-core backend: same 12 areas + memory; Gateway-only areas soft-no-op ──
 const AC_EXPECT = {
   'session-controller (create/selectModel/prompt)': (c, r, id) => assert.ok(r.sessions.get(id)),
-  'session-title': (c, r, id) => assert.equal(r.sessions.get(id).title, 'T 标题'), // mapping-only
+  'session-title': (c, r, id) => assert.equal(r.sessions.get(id).title, 'T 标题'),
   'working-directory': (c, r, id) => assert.match(String(r.sessions.get(id).projectDir), /\/w/),
-  'dsh-schedule': (c) => assert.ok(!c.some(([m]) => m === 'heartbeat.set_conf')), // soft-skip
-  'dsh-permission-presets': (c) => assert.ok(!c.some(([m]) => /permission/.test(m))),
+  'dsh-schedule': (c) => assert.ok(c.some(([m]) => m === 'heartbeat.set_conf')),
+  'dsh-permission-presets': (c) => assert.ok(c.some(([m]) => /permission/.test(m))),
   fork: async (c, r, id) => {
     await r.hs.pendingFor(id + '-kid')
     assert.ok(r.acCalls.some(x => x[0] === 'fork'))
     assert.match(r.sessions.get(id + '-kid').jiuwenSessionId, /^fork-/)
   },
   'dsh-plan-mode': (c, r) => assert.deepEqual(r.planSets, [true]),
-  'dsh-goal': (c) => assert.ok(!c.some(([m]) => m === 'command.goal')),
+  'dsh-goal': (c) => assert.ok(c.some(([m]) => m === 'command.goal')),
   'dsh-skill / skill-filesystem': async (c, r, id) => {
     await r.hs.pendingFor(id)
-    // skills sync skipped on agent-core — no skillBodies from Gateway path
-    assert.equal(c.filter(([m]) => /skills/.test(m)).length, 0)
+    assert.deepEqual(r.sessions.get(id).skillBodies?.map(b => b.content), ['MARKSKILLBODY'])
   },
   'agent-presets persona': () => {},
   'workspace archive / agent dispose': (c, r, id) => {
@@ -123,7 +130,7 @@ const AC_EXPECT = {
     assert.ok(r.sessions.get(id))
   },
   'memory: agent-instructions, session-reference, session-search': (c) => assert.equal(c.length, 0),
-  'dsh-experimental-auto-review (auto preset)': (c) => assert.ok(!c.some(([m]) => /permission/.test(m))),
+  'dsh-experimental-auto-review (auto preset)': (c) => assert.ok(c.some(([m, p]) => /permission/.test(m) && p?.level === 'ask')),
   'compaction, turn-outline, time-context, mcp-client, ralph, terminal, worktree (no host-sync side effects)': (c) => assert.equal(c.length, 0),
   'mcp-resources, subagent, todo, compaction, approval, web tools': (c) => assert.equal(c.length, 0),
 }

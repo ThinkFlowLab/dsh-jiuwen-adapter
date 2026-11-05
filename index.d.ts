@@ -132,7 +132,7 @@ export interface JiuwenAdapterConfig {
   mcpServerName?: string
   mcpStateDir?: string
   mode?: 'gateway' | 'openai'
-  /** Product backend when mode=gateway (default gateway). */
+  /** Product backend when mode=gateway (default agent-core). */
   backend?: 'gateway' | 'agent-core'
   modelDiscovery?: boolean
   models?: Array<{ id: string; name?: string; contextWindow?: number; maxTokens?: number; chatMode?: string }>

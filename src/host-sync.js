@@ -92,13 +92,15 @@ async function rpcOk(gateway, method, params, logger, label, opts = {}) {
  * use the agentcore transport; model/cwd/plan stay on the session map.
  */
 export function installHostSync(deps) {
-  const { ctx, config, sessions, gateway, logger, services, mcpBridge, permLedger, agentcore } = deps
+  const { ctx, config, sessions, gateway, logger, services, mcpBridge, permLedger, agentcore, agentcoreRpc } = deps
   const isAgentCore = () => String(config()?.backend || '').toLowerCase() === 'agent-core'
   const ac = () => (typeof agentcore === 'function' ? agentcore() : agentcore)
-  const rpc = (method, params, label) => rpcOk(
-    gateway, method, params, logger, label,
-    isAgentCore() ? { skip: 'agent-core' } : {},
-  )
+  const rpc = (method, params, label) => {
+    if (isAgentCore() && typeof deps.agentcoreRpc === 'function') {
+      return Promise.resolve(deps.agentcoreRpc(method, params)).catch(e => { soft(logger, label || method, e); return null })
+    }
+    return rpcOk(gateway, method, params, logger, label)
+  }
   const offs = []
   let disposed = false
   // Skills/permission syncs are serialized (one socket per RPC would otherwise race: a rapid
@@ -211,7 +213,7 @@ export function installHostSync(deps) {
       if (isAgentCore()) {
         // Sidecar has no session.rename; keep title on the dsh mapping only.
         sessions.update(id, { title, pendingTitle: undefined })
-        soft(logger, 'session.rename', 'skipped on agent-core (mapping-only)')
+        soft(logger, 'session.rename', 'agent-core mapping title updated')
         return
       }
       await (gateway().sessionRename?.(m.jiuwenSessionId, title)
@@ -235,11 +237,68 @@ export function installHostSync(deps) {
     queueSkills().catch(() => {})
   })
 
+
+  async function syncSkillsAgentCore(session) {
+    const f = resolveHostSyncFlags(config())
+    const svc = services()
+    const targets = []
+    if (session) {
+      const j = jiuwenSession(session)
+      if (j) targets.push(j)
+    } else {
+      for (const m of sessions.list()) {
+        const id = m.dshSessionId
+        if (sessionUsesProvider({ id }, config().provider, sessions)) {
+          targets.push({ id, mapping: m, cfg: config() })
+        }
+      }
+    }
+    if (!targets.length) return
+    const maxSkills = posInt(config().skillSyncMax, 20)
+    const maxChars = posInt(config().skillBodyMaxChars, 4000)
+    for (const t of targets) {
+      let agent
+      try { agent = svc.agents?.get?.(t.id) } catch { agent = undefined }
+      const reg = scopedService(svc, agent, 'skills')
+      if (!reg?.list) continue
+      const cwd = session?.header?.cwd ?? agent?.session?.header?.cwd ?? t.mapping?.projectDir
+      const opts = { ...(cwd ? { cwd } : {}), ...(agent ? { scope: agent } : {}) }
+      let hostSkills
+      try { hostSkills = await reg.list(opts) } catch { continue }
+      const enabled = []
+      for (const s of hostSkills || []) {
+        if (s?.name && s.invocation?.modelInvocable !== false) enabled.push(String(s.name))
+      }
+      const bodies = []
+      if (f.syncSkillInstall && typeof reg.get === 'function') {
+        for (const name of enabled.slice(0, maxSkills)) {
+          try {
+            const full = await reg.get(name, opts)
+            const content = full?.content
+            if (typeof content === 'string' && content.trim()) {
+              const description = typeof full?.description === 'string' && full.description.trim() !== content.trim()
+                ? skillDescription(full, content) : ''
+              bodies.push({ name, content: truncateSkillBody(content, maxChars), ...(description ? { description } : {}) })
+            }
+          } catch (e) { soft(logger, 'skills.get.ac', e) }
+        }
+      }
+      try {
+        sessions.update(t.id, {
+          skills: enabled.length ? enabled : undefined,
+          skillBodies: bodies.length ? bodies : undefined,
+          skillBodiesInjected: undefined,
+        })
+      } catch (e) { soft(logger, 'skills.map.ac', e) }
+    }
+  }
+
   async function syncSkillsNow(session) {
     const f = resolveHostSyncFlags(config())
     if (!f.syncSkills) return
     if (isAgentCore()) {
-      soft(logger, 'skills', 'skipped on agent-core (host tools via LocalFunction; no Gateway skills.*)')
+      // Native agent-core: load host skill bodies into mapping for soft-inject (no Gateway skills.*).
+      await syncSkillsAgentCore(session)
       return
     }
     const svc = services()
@@ -474,7 +533,9 @@ export function installHostSync(deps) {
     const f = resolveHostSyncFlags(config())
     if (!f.syncPause) return
     if (isAgentCore()) {
-      soft(logger, 'resume', 'skipped on agent-core (no chat.resume; next turn continues)')
+      const session = payload?.agent?.session || payload?.session
+      const j = jiuwenSession(session)
+      if (j) { try { sessions.update(j.id, { paused: false }) } catch (e) { soft(logger, 'resume', e) } }
       return
     }
     const session = payload?.agent?.session || payload?.session
@@ -657,8 +718,7 @@ export function installHostSync(deps) {
     const f = resolveHostSyncFlags(j.cfg)
     if (!f.syncMemory || j.mapping.memoryBridge || probing.has(j.id)) return
     if (isAgentCore()) {
-      try { sessions.update(j.id, { memoryBridge: 'gap' }) } catch { /* ignore */ }
-      soft(logger, 'memory', 'gap on agent-core (no memory.* RPC)')
+      try { sessions.update(j.id, { memoryBridge: 'adapter' }) } catch { /* ignore */ }
       return
     }
     probing.add(j.id)
@@ -699,7 +759,12 @@ export function installHostSync(deps) {
     const f = resolveHostSyncFlags(j.cfg)
     if (!f.syncMcp) return
     if (isAgentCore()) {
-      soft(logger, 'mcp', 'skipped on agent-core (host tools via LocalFunction, not MCP passthrough)')
+      try {
+        sessions.update(j.id, {
+          mcpNames: [j.cfg.mcpServerName || 'dsh-tools'],
+          mcpMode: 'local-function',
+        })
+      } catch (e) { soft(logger, 'mcp.ac', e) }
       return
     }
     // Ensure dsh-tools proxy is prepared when toolPassthrough=mcp (existing bridge).
