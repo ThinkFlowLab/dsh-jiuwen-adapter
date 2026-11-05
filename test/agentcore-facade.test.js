@@ -183,21 +183,26 @@ test('facade covers remaining session/list/create/archive/memory/plugins/misc RP
   assert.ok((await facade.sessionAssetsList()).assets)
   assert.ok(Array.isArray((await facade.memoryStatus('d2')).providers))
   assert.ok(Array.isArray((await facade.skillsMarketplaceList()).marketplaces))
-  assert.equal((await facade.teamList()).gatewayFallback, true)
+  // team list stays on agent-core/adapter registry (no gatewayFallback)
+  assert.equal((await facade.teamList()).gatewayFallback, undefined)
+  assert.ok(Array.isArray((await facade.agentsList()).agents))
 
-  // gateway auto-route when facade marks gatewayFallback
+  // gateway auto-route when facade marks gatewayFallback (hub still routes)
   {
     let routed = false
     const baseGw = {
       rpc: async () => ({ g: 1 }),
       teamList: async () => { routed = true; return { teams: [{ team_name: 'from-gw' }] } },
-      skillsMarketplaceList: async () => ({ marketplaces: [{ name: 'hub' }] }),
+      skillsMarketplaceList: async () => { routed = true; return { marketplaces: [{ name: 'hub' }] } },
     }
     const bound = bindAgentCoreFacade(baseGw, facade, () => ({ backend: 'agent-core', gatewayURL: 'ws://127.0.0.1:19000/ws' }))
     const tl = await bound.teamList()
+    assert.equal(routed, false, 'teamList must not auto-route')
+    assert.ok(Array.isArray(tl.teams))
+    const hub = await bound.skillsMarketplaceList()
     assert.equal(routed, true)
-    assert.equal(tl.routedVia, 'gateway')
-    assert.equal(tl.teams[0].team_name, 'from-gw')
+    assert.equal(hub.routedVia, 'gateway')
+    assert.equal(hub.marketplaces[0].name, 'hub')
   }
 
   // rpc coverage for remaining methods

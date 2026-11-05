@@ -264,6 +264,10 @@ export class AgentCoreTransport {
     return this._request('session.history', { sid })
   }
 
+  sessionCompact(sid, extra = {}) {
+    return this._request('session.compact', { sid, ...extra })
+  }
+
   async cancel(sid) {
     return this._request('turn.cancel', { sid })
   }
@@ -291,6 +295,9 @@ export class AgentCoreTransport {
     const sid = String(mapping?.jiuwenSessionId || options?.sessionId || 'anonymous')
     const text = { index: 0, body: '', started: false }
     const reasoning = { index: 1, body: '', started: false }
+    // openjiuwen emits streamed llm_output then a final `answer` that duplicates
+    // the same text (see agent_teams/monitor/stream_logger.py). Keep one.
+    let seenLlmOutput = false
     let usage
     let finished = false
     let aborted = Boolean(signal?.aborted)
@@ -317,10 +324,14 @@ export class AgentCoreTransport {
       const name = params.name
       const args = params.args || {}
       emitEvent({ type: 'tool_call', name, id: callId, arguments: args, raw: params })
-      if (this.surfaceToolEvents && this.eventDisplay === 'reasoning') {
+      if (this.surfaceToolEvents && this.eventDisplay === 'reasoning' && this.forwardReasoning) {
         const label = `🔧 ${name}(${safeArgs(args)})\n`
-        for (const c of emitTextDelta(reasoning.index, label, reasoning)) push({ chunk: c })
+        if (!reasoning.started) {
+          reasoning.started = true
+          push({ chunk: { type: 'block-start', index: reasoning.index, blockType: 'reasoning' } })
+        }
         reasoning.body += label
+        push({ chunk: { type: 'reasoning-delta', index: reasoning.index, text: label } })
       }
       let ok = true
       let content
@@ -376,21 +387,35 @@ export class AgentCoreTransport {
         return
       }
 
-      if (type === 'llm_output' || type === 'answer') {
+      if (type === 'llm_output') {
         const delta = extractText(payload)
         if (delta) {
+          seenLlmOutput = true
           for (const c of emitTextDelta(text.index, delta, text)) push({ chunk: c })
           text.body += delta
         }
-      } else if (type === 'llm_reasoning') {
-        if (this.forwardReasoning) {
-          const delta = extractText(payload) || extractReasoning(payload)
+      } else if (type === 'answer') {
+        // Final answer chunk: only use when no streamed llm_output arrived
+        // (non-streaming providers). Otherwise it duplicates the stream.
+        if (!seenLlmOutput) {
+          const delta = extractText(payload)
           if (delta) {
-            for (const c of emitTextDelta(reasoning.index, delta, reasoning)) {
-              // Prefer reasoning-delta when host supports it; also emit as text-delta on reasoning index.
-              push({ chunk: { type: 'reasoning-delta', index: reasoning.index, text: delta } })
+            for (const c of emitTextDelta(text.index, delta, text)) push({ chunk: c })
+            text.body += delta
+          }
+        }
+      } else if (type === 'llm_reasoning') {
+        const delta = extractText(payload) || extractReasoning(payload)
+        if (delta) {
+          // Always surface as a structured reasoning event (parity with Gateway EVENTS.REASONING).
+          emitEvent({ type: 'reasoning', text: delta })
+          if (this.forwardReasoning && this.eventDisplay !== 'markers') {
+            if (!reasoning.started) {
+              reasoning.started = true
+              push({ chunk: { type: 'block-start', index: reasoning.index, blockType: 'reasoning' } })
             }
             reasoning.body += delta
+            push({ chunk: { type: 'reasoning-delta', index: reasoning.index, text: delta } })
           }
         }
       } else if (type === 'llm_usage' || type === 'context.usage') {
@@ -462,7 +487,7 @@ export class AgentCoreTransport {
       await startPromise.catch(() => {})
 
       if (reasoning.started) {
-        yield { type: 'block-end', index: reasoning.index, block: { type: 'text', text: reasoning.body } }
+        yield { type: 'block-end', index: reasoning.index, block: { type: 'reasoning', text: reasoning.body } }
       }
       const reason = aborted || signal?.aborted
         ? { kind: 'aborted', failure: { message: 'aborted', code: 'ABORTED' } }

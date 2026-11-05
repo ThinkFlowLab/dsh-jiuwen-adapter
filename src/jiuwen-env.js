@@ -95,12 +95,31 @@ export function resolveAgentCoreModel(cfg = {}, options = {}, overrides = {}) {
   const provider = process.env.AGENTCORE_FAKE_MODEL === '1'
     ? 'fake'
     : first(overrides.modelProvider, jw.MODEL_PROVIDER, 'OpenAI')
+  const endpointProfile = first(
+    overrides.endpointProfile,
+    process.env.AGENTCORE_ENDPOINT_PROFILE,
+    process.env.ENDPOINT_PROFILE,
+    jw.ENDPOINT_PROFILE,
+    cfg.endpointProfile,
+  )
+  // Match JiuwenSwarm default for chat turns: keep thinking off unless the host
+  // asks to forward reasoning (or AGENTCORE_REASONING explicitly enables it).
+  // Volcengine seed maps mode=disabled → reasoning_effort=minimal.
+  const reasoningMode = first(
+    overrides.reasoningMode,
+    process.env.AGENTCORE_REASONING,
+    (cfg.forwardReasoning === false || process.env.JIUWEN_FORWARD_REASONING === '0')
+      ? 'disabled'
+      : undefined,
+  ) || 'disabled'
   const model = {
     provider,
     api_base: String(apiBase),
     api_key_env: cfg.apiKeyEnv || 'JIUWEN_API_KEY',
     model: modelName,
+    reasoning: { mode: String(reasoningMode).toLowerCase() === 'enabled' ? 'enabled' : 'disabled' },
   }
+  if (endpointProfile) model.endpoint_profile = endpointProfile
   if (options.temperature != null) model.temperature = options.temperature
   if (options.maxTokens != null) model.max_tokens = options.maxTokens
   if (options.topP != null) model.top_p = options.topP

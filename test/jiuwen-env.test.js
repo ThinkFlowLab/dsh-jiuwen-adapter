@@ -117,3 +117,24 @@ test('alias remap prefers AGENTCORE_MODEL / MODEL_NAME env over jiuwen .env', ()
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('resolveAgentCoreModel defaults reasoning.mode=disabled and passes endpoint_profile', () => {
+  const prevEp = process.env.ENDPOINT_PROFILE
+  const prevAr = process.env.AGENTCORE_REASONING
+  process.env.ENDPOINT_PROFILE = 'openai'
+  delete process.env.AGENTCORE_REASONING
+  try {
+    const m = resolveAgentCoreModel(
+      { defaultModel: 'm', apiKeyEnv: 'JIUWEN_API_KEY', baseURL: 'https://example.test/v1' },
+      {},
+      { modelName: 'doubao-seed-2.0-mini' },
+    )
+    assert.equal(m.reasoning?.mode, 'disabled')
+    assert.equal(m.endpoint_profile, 'openai')
+  } finally {
+    if (prevEp == null) delete process.env.ENDPOINT_PROFILE
+    else process.env.ENDPOINT_PROFILE = prevEp
+    if (prevAr == null) delete process.env.AGENTCORE_REASONING
+    else process.env.AGENTCORE_REASONING = prevAr
+  }
+})

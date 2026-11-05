@@ -168,6 +168,16 @@ rl.on('line', async (line) => {
       write({ id, result: { ok: true, messages: sessions.get(params.sid) || [] } })
       return
     }
+    if (method === 'session.compact') {
+      const msgs = sessions.get(params.sid)
+      if (!msgs) {
+        write({ id, result: { ok: true, compacted: false, reason: 'no-agent' } })
+        return
+      }
+      sessions.set(params.sid, [])
+      write({ id, result: { ok: true, compacted: true, kept: 0 } })
+      return
+    }
     write({ id, error: { code: -32601, message: `unknown method: ${method}` } })
   } catch (e) {
     if (id !== undefined) write({ id, error: { code: -32000, message: String(e.message || e) } })

@@ -545,3 +545,65 @@ async def test_sync_tools_skips_unchanged_fingerprint(monkeypatch):
         assert getattr(agent, "_dsh_last_phases", {}).get("tools", {}).get("skipped") is False
     finally:
         await sm.stop()
+
+
+@pytest.mark.asyncio
+async def test_session_compact_error_paths(ckpt_dir, writer, fake, monkeypatch):
+    fake.reset_script([AssistantMessage(content="x")])
+    h = RpcHarness(ckpt_dir, writer)
+    await h.start()
+    try:
+        await h.call(
+            "turn.start",
+            {
+                "sid": "ce1",
+                "query": "q",
+                "tools": [],
+                "model": FAKE_MODEL,
+            },
+        )
+        # keep_last path
+        r = await h.call("session.compact", {"sid": "ce1", "keep_last": 2})
+        assert r["result"]["ok"] is True
+
+        # Force get_current_context failure then still compact
+        mgr = h.mgr
+        agent = mgr._agents["ce1"]
+
+        def boom(_sid):
+            raise RuntimeError("ctx boom")
+
+        agent.get_current_context = boom  # type: ignore[method-assign]
+        r2 = await h.call("session.compact", {"sid": "ce1"})
+        assert r2["result"]["ok"] is True
+
+        async def boom2(*_a, **_k):
+            raise RuntimeError("rebuild boom")
+
+        agent.create_new_context_engine = boom2  # type: ignore[method-assign]
+        r3 = await h.call("session.compact", {"sid": "ce1"})
+        assert r3["result"]["ok"] is False
+        assert r3["result"].get("error") == "context-rebuild-failed"
+    finally:
+        await h.stop()
+
+
+@pytest.mark.asyncio
+async def test_task_loop_env_opt_in(ckpt_dir, writer, fake, monkeypatch):
+    monkeypatch.setenv("AGENTCORE_TASK_LOOP", "1")
+    fake.reset_script([AssistantMessage(content="loop-ok")])
+    h = RpcHarness(ckpt_dir, writer)
+    await h.start()
+    try:
+        r = await h.call(
+            "turn.start",
+            {
+                "sid": "tl1",
+                "query": "hi",
+                "tools": [],
+                "model": FAKE_MODEL,
+            },
+        )
+        assert r["result"]["ok"] is True
+    finally:
+        await h.stop()

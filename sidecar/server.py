@@ -23,6 +23,7 @@ METHODS = {
     "session.fork",
     "session.delete",
     "session.history",
+    "session.compact",
     "ping",
     "shutdown",
 }
@@ -136,6 +137,11 @@ class NdjsonServer:
             if method == "session.history":
                 self._require(params, "sid")
                 result = await self._mgr.session_history(params)
+                await self._reply_ok(req_id, result)
+                return
+            if method == "session.compact":
+                self._require(params, "sid")
+                result = await self._mgr.session_compact(params)
                 await self._reply_ok(req_id, result)
                 return
         except asyncio.CancelledError:

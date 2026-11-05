@@ -87,11 +87,60 @@ test('streaming chunks map to text-delta and finish:stop', async () => {
       { query: 'hi' },
     ))
     const text = chunks.filter((c) => c.type === 'text-delta').map((c) => c.text).join('')
-    assert.match(text, /abc/)
+    // Fake sidecar emits llm_output then answer with the same body — must not double.
+    assert.equal(text, 'abc')
     assert.ok(chunks.some((c) => c.type === 'reasoning-delta'))
+    assert.ok(chunks.some((c) => c.type === 'block-start' && c.blockType === 'reasoning'), JSON.stringify(chunks.filter(c=>c.type==='block-start')))
+    assert.ok(chunks.some((c) => c.type === 'block-end' && c.block?.type === 'reasoning'))
     assert.ok(chunks.some((c) => c.type === 'usage'))
     assert.equal(chunks.at(-1).type, 'finish')
     assert.equal(chunks.at(-1).reason.kind, 'stop')
+  } finally {
+    await t.shutdown()
+  }
+})
+
+test('answer chunk alone (no llm_output) still emits text', async () => {
+  // Custom fake: only answer, no llm_output — non-streaming fallback path.
+  const FAKE = new URL('./helpers/fake-sidecar.mjs', import.meta.url).pathname
+  const { spawn } = await import('node:child_process')
+  const spawnAnswerOnly = () => (cmd, args, opts) => {
+    // Reuse fake but monkey via env is hard; instead script with slow that we short-circuit:
+    // Use a tiny inline by overriding FAKE script that emits answer-only after llm_usage skip.
+    // The stock fake always emits both; simulate by consuming stream and checking dedupe above.
+    // This test drives a one-shot custom child:
+    const code = `
+      import readline from 'node:readline';
+      const rl = readline.createInterface({ input: process.stdin });
+      function write(o){ process.stdout.write(JSON.stringify(o)+String.fromCharCode(10)); }
+      rl.on('line', async (line) => {
+        let msg; try { msg = JSON.parse(line); } catch { return; }
+        if (msg.method === 'ping') { write({ id: msg.id, result: { ok: true, version: 1 } }); return; }
+        if (msg.method === 'turn.start') {
+          const sid = msg.params.sid;
+          write({ event: 'chunk', params: { type: 'answer', payload: { output: 'ONLY_ANSWER' }, sid } });
+          write({ id: msg.id, result: { ok: true } });
+          return;
+        }
+        if (msg.method === 'shutdown' || msg.method === 'session.delete') { write({ id: msg.id, result: { ok: true } }); return; }
+        write({ id: msg.id, result: { ok: true } });
+      });
+    `
+    const child = spawn(process.execPath, ['--input-type=module', '-e', code], { ...opts, stdio: ['pipe', 'pipe', 'pipe'] })
+    return child
+  }
+  const t = new AgentCoreTransport({
+    spawnImpl: spawnAnswerOnly(),
+    logger: { warn() {}, error() {} },
+  })
+  try {
+    const chunks = await collect(t.stream(
+      { messages: [{ role: 'user', content: 'hi' }] },
+      { jiuwenSessionId: 'ans-only' },
+      { query: 'hi' },
+    ))
+    const text = chunks.filter((c) => c.type === 'text-delta').map((c) => c.text).join('')
+    assert.equal(text, 'ONLY_ANSWER')
   } finally {
     await t.shutdown()
   }
@@ -272,6 +321,28 @@ test('fork / delete / history', async () => {
     await t.sessionDelete('child')
     const hist2 = await t.sessionHistory('child')
     assert.equal(hist2.messages.length, 0)
+  } finally {
+    await t.shutdown()
+  }
+})
+
+test('sessionCompact clears fake history', async () => {
+  const t = new AgentCoreTransport({
+    spawnImpl: spawnFake([{ type: 'text', text: 'keep-me' }]),
+    logger: { warn() {}, error() {} },
+  })
+  try {
+    await collect(t.stream(
+      { messages: [{ role: 'user', content: 'x' }] },
+      { jiuwenSessionId: 'cmp1' },
+      { query: 'x' },
+    ))
+    const before = await t.sessionHistory('cmp1')
+    assert.ok((before.messages || []).length >= 1)
+    const r = await t.sessionCompact('cmp1')
+    assert.equal(r.compacted, true)
+    const after = await t.sessionHistory('cmp1')
+    assert.equal((after.messages || []).length, 0)
   } finally {
     await t.shutdown()
   }

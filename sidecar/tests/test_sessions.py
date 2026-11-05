@@ -169,3 +169,32 @@ def test_cross_process_history_restore(tmp_path):
 
 
 # Ensure helper file exists alongside
+
+
+@pytest.mark.asyncio
+async def test_session_compact_rebuilds_context(ckpt_dir, writer, fake):
+    fake.reset_script([AssistantMessage(content="before-compact")])
+    h = RpcHarness(ckpt_dir, writer)
+    await h.start()
+    try:
+        await h.call(
+            "turn.start",
+            {
+                "sid": "c1",
+                "query": "hello compact",
+                "tools": [],
+                "model": FAKE_MODEL,
+                "system": "sys",
+            },
+        )
+        r = await h.call("session.compact", {"sid": "c1"})
+        assert r["result"]["ok"] is True
+        assert r["result"]["compacted"] is True
+        r2 = await h.call("session.compact", {"sid": "missing"})
+        assert r2["result"]["ok"] is True
+        assert r2["result"]["compacted"] is False
+        hist = await h.call("session.history", {"sid": "c1"})
+        msgs = hist["result"].get("messages") or hist["result"].get("history") or []
+        assert isinstance(msgs, list)
+    finally:
+        await h.stop()

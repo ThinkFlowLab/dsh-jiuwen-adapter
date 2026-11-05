@@ -296,10 +296,19 @@ export function createAgentCoreFacade(deps) {
       return { in_plan: inPlan, chat_mode: m?.chatMode || null }
     },
     async compact(sid) {
-      // Soft: clear systemHash so persona reinjects; sidecar history kept.
+      // Prefer agent-core context rebuild; still clear host persona hashes so dsh reinjects.
       const m = byDsh(sessions, sid)
       if (m) sessions.update(m.dshSessionId, { systemHash: undefined, skillInjectHash: undefined })
-      return { ok: true, session_id: jwId(sessions, sid), compacted: true }
+      let ac = { ok: true, compacted: false, note: 'no-transport' }
+      try {
+        const transport = getAgentcore?.()
+        if (transport?.sessionCompact && m?.jiuwenSessionId) {
+          ac = await transport.sessionCompact(m.jiuwenSessionId, { keep_last: 0 })
+        }
+      } catch (e) {
+        ac = { ok: false, compacted: false, error: String(e?.message || e) }
+      }
+      return { ok: ac.ok !== false, session_id: jwId(sessions, sid), compacted: Boolean(ac.compacted), agentcore: ac }
     },
     async mcpList() {
       // Host tools are LocalFunction on agent-core; report passthrough mode.
@@ -355,18 +364,20 @@ export function createAgentCoreFacade(deps) {
       return { templates: builtIn, note: 'templates listable on agent-core; execute swarm via gatewayFallback' }
     },
     async teamList() {
+      // Prefer agent-core/adapter registry (dsh already surfaces teams via state).
+      // Do not auto-route list to Gateway — that double-sourced teams vs plugins.
+      // Workflow *execution* still gatewayFalls back below.
       const stored = state.listTeams?.() || { teams: [] }
       return {
         teams: stored.teams || [],
         note: (stored.teams || []).length
-          ? 'adapter-side team registry'
-          : 'agent-core: no local teams; set via state or auto-route to Gateway',
-        gatewayFallback: true,
+          ? 'agent-core adapter team registry'
+          : 'agent-core: no local teams registered',
       }
     },
     async teamBindingsList() {
       const stored = state.listTeams?.() || { teams: [] }
-      return { teams: stored.teams || [], bindings: stored.teams || [], gatewayFallback: true }
+      return { teams: stored.teams || [], bindings: stored.teams || [] }
     },
     async agentsToolsList() { return { tools: [] } },
     async hooksList() { return { hooks: [] } },

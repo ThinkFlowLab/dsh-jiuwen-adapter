@@ -178,6 +178,27 @@ Existing `session-map.json` entries keep their `jiuwenSessionId`. On first agent
 | External mem0 / lakebase memory | Status reports provider availability from env; openjiuwen ships providers | Needs live mem0/lakebase service + credentials; Gateway wires them into agentserver | Set `MEM0_*` / `LAKEBASE_*` / `OPENJIUWEN_MEMORY_ENABLED`, or use host memory plugins (`dsh-agent-instructions`, `dsh-session-reference`, `dsh-experimental-session-search`) |
 
 
+## Reasoning / thinking (follow-up)
+
+Gateway maps `REASONING` events; agent-core maps `llm_reasoning` → structured `reasoning` /
+`reasoning-delta` (respects `forwardReasoning`). Default `reasoning.mode=disabled` (Volcengine
+seed → `reasoning_effort=minimal`) to match Gateway chat turns. openjiuwen also emits a final
+`answer` chunk that **duplicates** streamed `llm_output`; the transport drops `answer` when
+`llm_output` was already seen (same dedupe as `agent_teams/monitor/stream_logger.py`).
+
+## Feature ownership (dsh ↔ agent-core)
+
+| feature | before | after | compat | notes |
+|---|---|---|---|---|
+| Tools / MCP execute | LocalFunction → `ctx.tools.execute` | **unchanged** (agent-core) | keep | single path; dsh plugins keep hooks |
+| Permissions / auto-review | hostSync + toolApproval host | **unchanged** | keep | `enable_security_rail=False` avoids double-gate |
+| Compact | adapter soft hash clear | **agent-core** `session.compact` → `create_new_context_engine` | keep | host memory plugins still authoritative |
+| Team list / bindings | gatewayFallback list | **agent-core/adapter registry** (no auto-route) | keep | workflow *execute* still Gateway |
+| Agents list | empty | DeepAgent + host agents; task-loop opt-in | keep | `AGENTCORE_TASK_LOOP=1` only |
+| Task/subagent loop | unused | opt-in via env | keep | default off = no tool double-exec |
+| Swarm workflow execute / hub / skill versions | gatewayFallback | **kept on Gateway** | — | needs agentserver |
+| agent-core-only (medical_kb, RSI, MoA, web_research_rail, …) | — | **skipped** | — | no dsh equivalent |
+
 ## Feature coverage vs Gateway (deep audit)
 
 Status legend: **native** = openjiuwen/sidecar; **adapter** = session map / `agentcore-state.json` / host pipeline; **fallback** = `gatewayFallback` auto-route; **missing** = not available.

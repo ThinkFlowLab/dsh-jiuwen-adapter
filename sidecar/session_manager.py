@@ -107,7 +107,7 @@ def build_model(model_spec: dict) -> Model:
     }
     client_provider = provider_map.get(str(provider).lower(), provider)
 
-    req_kwargs = {"model_name": model_name}
+    req_kwargs: dict = {"model_name": model_name}
     if model_spec.get("temperature") is not None:
         try:
             req_kwargs["temperature"] = float(model_spec["temperature"])
@@ -123,13 +123,35 @@ def build_model(model_spec: dict) -> Model:
             req_kwargs["top_p"] = float(model_spec["top_p"])
         except (TypeError, ValueError):
             pass
+    # Reasoning / thinking: provider-neutral. Default disabled to match Gateway
+    # chat turns (Volcengine seed → reasoning_effort=minimal). Never log keys.
+    reasoning = model_spec.get("reasoning")
+    if isinstance(reasoning, dict) and reasoning.get("mode"):
+        mode = str(reasoning.get("mode")).lower()
+        req_kwargs["reasoning"] = {
+            "mode": "enabled" if mode in ("enabled", "on", "true") else "disabled"
+        }
+        if reasoning.get("effort"):
+            req_kwargs["reasoning"]["effort"] = str(reasoning["effort"])
+    elif model_spec.get("reasoning_mode"):
+        mode = str(model_spec["reasoning_mode"]).lower()
+        req_kwargs["reasoning"] = {
+            "mode": "enabled" if mode in ("enabled", "on", "true") else "disabled"
+        }
+    else:
+        req_kwargs["reasoning"] = {"mode": "disabled"}
+
+    client_kwargs: dict = {
+        "client_provider": client_provider,
+        "api_key": api_key,
+        "api_base": api_base,
+        "verify_ssl": False,
+    }
+    endpoint_profile = model_spec.get("endpoint_profile") or os.environ.get("ENDPOINT_PROFILE")
+    if endpoint_profile:
+        client_kwargs["endpoint_profile"] = str(endpoint_profile)
     return Model(
-        model_client_config=ModelClientConfig(
-            client_provider=client_provider,
-            api_key=api_key,
-            api_base=api_base,
-            verify_ssl=False,
-        ),
+        model_client_config=ModelClientConfig(**client_kwargs),
         model_config=ModelRequestConfig(**req_kwargs),
     )
 
@@ -270,8 +292,9 @@ class SessionManager:
 
     @staticmethod
     def _model_fingerprint(model_spec: dict) -> str:
-        keys = ("provider", "api_base", "model", "api_key_env", "temperature", "max_tokens", "top_p")
+        keys = ("provider", "api_base", "model", "api_key_env", "temperature", "max_tokens", "top_p", "endpoint_profile")
         slim = {k: model_spec.get(k) for k in keys}
+        slim["reasoning"] = model_spec.get("reasoning") or model_spec.get("reasoning_mode")
         return hashlib.sha256(
             json.dumps(slim, sort_keys=True, ensure_ascii=False, default=str).encode()
         ).hexdigest()
@@ -367,6 +390,10 @@ class SessionManager:
         prompt_mode = os.environ.get("AGENTCORE_PROMPT_MODE") or (
             "none" if system else "minimal"
         )
+        # Task/subagent loop is opt-in: enabling it registers openjiuwen TaskTool
+        # alongside LocalFunction host tools. Default off keeps dsh plugin tool
+        # hooks as the single execution path (no double-exec / bypass).
+        task_loop = os.environ.get("AGENTCORE_TASK_LOOP", "").strip() == "1"
         agent = create_deep_agent(
             model,
             card=AgentCard(id=sid, name=f"dsh-{sid}"),
@@ -377,6 +404,10 @@ class SessionManager:
             enable_security_rail=False,
             enable_model_anomaly_detection_rail=False,
             prompt_mode=prompt_mode,
+            enable_task_loop=task_loop,
+            enable_async_subagent=task_loop,
+            add_general_purpose_agent=task_loop,
+            parallel_tool_calls=True,
         )
         self._agents[sid] = agent
         self._tool_names[sid] = {t.card.name for t in tools}
@@ -523,6 +554,34 @@ class SessionManager:
         except Exception:
             logger.exception("error awaiting cancelled turn sid=%s", sid)
         return {"ok": True, "cancelled": True}
+
+    async def session_compact(self, params: dict) -> dict:
+        """Rebuild context engine for sid — dsh /jiuwen compact parity.
+
+        Keeps DeepAgent + LocalFunction tools (plugin compat). Does not enable
+        agent-core memory rails; host memory plugins stay authoritative.
+        """
+        sid = params["sid"]
+        agent = self._agents.get(sid)
+        if agent is None:
+            return {"ok": True, "compacted": False, "reason": "no-agent"}
+        keep = int(params.get("keep_last") or 0)
+        messages: List[Any] = []
+        try:
+            messages = list(agent.get_current_context(sid) or [])
+        except Exception:
+            logger.exception("compact get_current_context failed sid=%s", sid)
+            messages = []
+        if keep > 0 and messages:
+            messages = messages[-keep:]
+        else:
+            messages = []
+        try:
+            await agent.create_new_context_engine(sid, messages=messages)
+        except Exception:
+            logger.exception("compact create_new_context_engine failed sid=%s", sid)
+            return {"ok": False, "compacted": False, "error": "context-rebuild-failed"}
+        return {"ok": True, "compacted": True, "kept": len(messages)}
 
     async def session_fork(self, params: dict) -> dict:
         from_sid = params["from"]
