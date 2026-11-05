@@ -59,3 +59,34 @@ test('jiuwenHome uses JIUWEN_HOME override', () => {
     else process.env.JIUWEN_HOME = prev
   }
 })
+
+test('realHomedir JIUWEN_REAL_HOME override wins over getent/HOME', () => {
+  const prevR = process.env.JIUWEN_REAL_HOME
+  process.env.JIUWEN_REAL_HOME = '/custom/real/home'
+  try {
+    assert.equal(realHomedir(), '/custom/real/home')
+  } finally {
+    if (prevR == null) delete process.env.JIUWEN_REAL_HOME
+    else process.env.JIUWEN_REAL_HOME = prevR
+  }
+})
+
+test('first() empty vals and resolveAgentCoreModel temperature/topP/fake', () => {
+  const prev = process.env.AGENTCORE_FAKE_MODEL
+  process.env.AGENTCORE_FAKE_MODEL = '1'
+  try {
+    const m = resolveAgentCoreModel(
+      { defaultModel: 'm1', baseURL: 'http://127.0.0.1:9/v1' },
+      { temperature: 0.2, maxTokens: 10, topP: 0.9 },
+      { modelName: 'explicit-model' },
+    )
+    assert.equal(m.provider, 'fake')
+    assert.equal(m.model, 'explicit-model')
+    assert.equal(m.temperature, 0.2)
+    assert.equal(m.max_tokens, 10)
+    assert.equal(m.top_p, 0.9)
+  } finally {
+    if (prev == null) delete process.env.AGENTCORE_FAKE_MODEL
+    else process.env.AGENTCORE_FAKE_MODEL = prev
+  }
+})
