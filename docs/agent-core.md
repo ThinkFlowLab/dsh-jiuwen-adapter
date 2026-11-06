@@ -332,6 +332,8 @@ Pinned runtime: **`openjiuwen==0.1.20.post1`** (sources `/workspace/agent-core-s
 
 ### Capability inventory
 
+The capabilities marked opt-in below are wired through `agentcore`. See [agentcore-capabilities.md](./agentcore-capabilities.md).
+
 | Area | Module path (0.1.20.post1) | Adapter uses now? | Could use later? |
 |---|---|---|---|
 | **DeepAgent factory** | `openjiuwen/harness/factory.py` (`create_deep_agent`) | **yes** — sidecar builds one DeepAgent per dsh session | — |
@@ -339,24 +341,24 @@ Pinned runtime: **`openjiuwen==0.1.20.post1`** (sources `/workspace/agent-core-s
 | **Streaming run** | `openjiuwen/core/runner` (`Runner.run_agent_streaming`) | **yes** | — |
 | **Abort / cancel** | turn task cancel; rails `harness/rails/interrupt/` | **yes** (`turn.cancel`) | ConfirmInterruptRail / ask-user rails |
 | **LocalFunction tools** | `openjiuwen/core/foundation/tool` | **yes** — host `ctx.tools.execute` bridge | — |
-| **MCP servers on agent** | `create_deep_agent(mcps=…)` + `harness/rails/mcp_rail.py` | no (dsh MCP stays on host) | Register selected MCP servers inside sidecar |
+| **MCP servers on agent** | `create_deep_agent(mcps=…)` + `harness/rails/mcp_rail.py` | dsh MCP tools arrive as host tools; **opt-in** `agentcore.mcp` for extra servers (dsh-gated) | — |
 | **Checkpointer / persistence** | `core/session/checkpointer/` (`persistence` sqlite, inmemory, noop) | **yes** — sqlite under `DSH_JIUVEN_AC_DIR` | Cross-host shared DB |
 | **Context engine / compaction** | `core/context_engine/` | **yes** (engine inside DeepAgent; host `/jiuwen compact` clears hash) | Tune compressors / offloaders |
-| **Plan mode** | `harness/rails/agent_mode_rail.py`, `enable_plan_mode` | **yes** | Task-planning rail (`enable_task_planning`) |
-| **Skills** | `harness/skills/`, `core/operator/skill_call` | partial — host skill bodies injected as system text | Native DeepAgent `skills=` paths |
-| **Memory** | `core/memory/` + rails `harness/rails/memory/` (mem0, lakebase, openviking, agentarts, …) | status/env only; host memory plugins | Wire `OPENJIUWEN_MEMORY_ENABLED` / mem0 |
-| **Security rails** | `harness/rails/security/` | **off** (`enable_security_rail=False`) | Opt-in prompt/tool security |
-| **Model anomaly / tool-loop rail** | `harness/rails/model_anomaly_detection_rail.py` | **off** in sidecar (Gateway agentserver may still enforce) | Opt-in with higher thresholds |
-| **Heartbeat rail** | `harness/rails/heartbeat_rail.py` | no — adapter-state heartbeat only | Native heartbeat scheduling |
-| **Sys operation / sandbox** | `extensions/sys_operation/`, `sys_operation_rail` | no — file/bash via dsh tools | Sidecar sandbox for untrusted code |
+| **Plan mode** | `harness/rails/agent_mode_rail.py`, `enable_plan_mode` | **yes**; task planning is **opt-in** `agentcore.planning` (mirrored to dsh `todo_write`) | — |
+| **Skills** | `harness/skills/`, `core/operator/skill_call` | **opt-in** `agentcore.skills` (SkillUseRail over dsh skills); default: host skill bodies injected | — |
+| **Memory** | `core/memory/` + rails `harness/rails/memory/` (mem0, lakebase, openviking, agentarts, …) | **opt-in** `agentcore.memory` (Memory/CodingMemory/External rails, `/jiuwen memory …`) | — |
+| **Security rails** | `harness/rails/security/` | **opt-in** `agentcore.security` | — |
+| **Model anomaly / tool-loop rail** | `harness/rails/model_anomaly_detection_rail.py` | **opt-in** `agentcore.anomaly` | — |
+| **Heartbeat rail** | `harness/rails/heartbeat_rail.py` | **opt-in** `agentcore.heartbeat` (`runKind: heartbeat`) | — |
+| **Sys operation / sandbox** | `extensions/sys_operation/`, `sys_operation_rail` | **opt-in** `agentcore.sysOperation`, dsh-gated | — |
 | **Multimodal** | vision/audio model configs; `multimodal_*` rails; image window mutator | **yes** — image URLs on turn | Audio / native read_image |
-| **Subagents / task loop** | `harness/subagent*`, `enable_task_loop` | no | Parallel subagents for heavy tasks |
+| **Subagents / task loop** | `harness/subagent*`, `enable_task_loop` | **opt-in** `agentcore.subagents` (children use dsh tools) | — |
 | **Multi-agent / teams / swarm** | `core/multi_agent/`, `agent_teams/` | list/templates only; **execute → gatewayFallback** | Embed TeamRuntime in sidecar |
 | **Graph / Symphony** | `core/graph/`, `symphony/` | no | Advanced workflows |
-| **LSP / progressive tools / MoA** | `harness/rails/lsp_rail.py`, `progressive_tool_rail.py`, `moa_rail.py` | no | Coding-agent extras |
-| **KV cache** | `core/kv_cache/`, harness kv_cache | no | Latency wins on long sessions |
+| **LSP / progressive tools / MoA** | `harness/rails/lsp_rail.py`, `progressive_tool_rail.py`, `moa_rail.py` | **opt-in** `agentcore.progressiveTools`, `agentcore.moa`; LSP not wired | — |
+| **KV cache** | `core/kv_cache/`, harness kv_cache | **opt-in** `agentcore.kvCache` | — |
 | **Evaluation / evolving / RSI** | `agent_evolving/`, `auto_harness/`, `rsi/` | no | Offline eval pipelines |
-| **Observability / OTEL** | `extensions/observability`, `extensions/tracer_otel` | logs only | Full traces |
+| **Observability / OTEL** | `extensions/observability`, `extensions/tracer_otel` | **opt-in** `agentcore.otel` | — |
 | **LLM providers** | `core/foundation/llm` (`ProviderType`: OpenAI, OpenAIAccount, Anthropic, DashScope, OpenRouter, SiliconFlow, …) | **yes** via `Model` + env key | Provider routing / AnthropicMessages |
 | **Parallel tool calls** | `create_deep_agent(parallel_tool_calls=True)` default | inherited | — |
 

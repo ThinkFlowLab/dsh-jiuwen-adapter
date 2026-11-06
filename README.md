@@ -61,6 +61,7 @@ Step-by-step guide for Mac and Linux: **[docs/quickstart.md](./docs/quickstart.m
 | 🎛️ **Per-profile overrides** | `sessionOverrides` by host agent preset (`preset` glob) sets model / chat mode / template defaults; request, catalog and `/jiuwen mode` still win | opt-in |
 | 🧭 **Bridges** | Model discovery, typed events | opt-in |
 | 🔄 **Host → Jiuwen sync** | Skills, MCP, model, plan, workDir, title, delete, goal, pause, permissions, fork, schedules ([docs](./docs/host-sync.md)) | on |
+| 🧩 **Native agent-core capabilities** | `agentcore`: skills, task planning (mirrored to dsh todos), long-term/coding/external memory, subagents on dsh tools, interrupts, RAG, MCP, MoA, OTEL …, and every native tool is dsh-gated ([docs](./docs/agentcore-capabilities.md)) | opt-in |
 | 🩺 **Config validation** | Unknown keys get a "did you mean" hint and deprecated keys get a warning. Never throws | on |
 
 ## Compatibility
@@ -80,7 +81,7 @@ The adapter also works in any Cordis app that has an `llm` service ([usage](./do
 
 - [Quickstart](./docs/quickstart.md), [Configuration](./docs/configuration.md), [Troubleshooting](./docs/troubleshooting.md)
 - [Using it from code and Gateway features](./docs/usage.md), [Gateway RPC coverage](./docs/coverage.md)
-- [dsh integration](./docs/dsh-integration.md), [Host → Jiuwen sync](./docs/host-sync.md), [Testing](./docs/testing.md), [Known issues and test logs](./docs/known-issues.md)
+- [Native agent-core capabilities](./docs/agentcore-capabilities.md), [dsh integration](./docs/dsh-integration.md), [Host → Jiuwen sync](./docs/host-sync.md), [Testing](./docs/testing.md), [Known issues and test logs](./docs/known-issues.md)
 - [Publishing to a dsh plugin market](./docs/marketplace.md), [Architecture](./ARCHITECTURE.md)
 
 ## Development
