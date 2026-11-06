@@ -10,6 +10,7 @@
  *   openai  — diagnostics / connectivity fallback only (not the product brain).
  */
 import { DEFAULT_BUSY_IGNORE_SOURCES } from './busy-interrupt.js'
+import { resolveAgentcoreFeatures } from './agentcore-features.js'
 
 const DEFAULT_MODELS = [
   { id: 'jiuwen-default', name: 'Jiuwen Default', contextWindow: 128_000, maxTokens: 8192 },
@@ -112,6 +113,8 @@ export function resolveConfig(raw = {}, opts = {}) {
      * JIUWEN_GATEWAY_FALLBACK=1 when a Gateway is available.
      */
     gatewayFallback: env.JIUWEN_GATEWAY_FALLBACK === '1' || raw.gatewayFallback === true,
+    /** Opt-in openjiuwen agent-core capabilities (skills, planning, memory, subagents, …); all off by default. */
+    agentcore: resolveAgentcoreFeatures(raw.agentcore, env),
     brainOwnership: 'jiuwen',
     baseURL: stripTrailingSlash(String(
       env.JIUWEN_BASE_URL

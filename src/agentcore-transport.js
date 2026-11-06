@@ -260,6 +260,18 @@ export class AgentCoreTransport {
     return this._request('session.delete', { sid })
   }
 
+  /** Native capability status for a sidecar session (rails, tools, gate asks). */
+  async capabilitiesStatus(sid) {
+    await this.ensureStarted()
+    return this._request('capabilities.status', { sid: String(sid) })
+  }
+
+  /** Adapter-owned agent-core memory: op list|show|search|clear (clear needs confirm: true). */
+  async memoryOp(params = {}) {
+    await this.ensureStarted()
+    return this._request('memory.op', params)
+  }
+
   async sessionHistory(sid) {
     return this._request('session.history', { sid })
   }
@@ -323,8 +335,10 @@ export class AgentCoreTransport {
       const callId = params.callId
       const name = params.name
       const args = stripNullishArgs(params.args || {})
-      emitEvent({ type: 'tool_call', name, id: callId, arguments: args, raw: params })
-      if (this.surfaceToolEvents && this.eventDisplay === 'reasoning' && this.forwardReasoning) {
+      // mirror: native planning syncing dsh todo_write — runs through dsh, but is not a model step.
+      const mirror = params.mirror === true
+      emitEvent({ type: 'tool_call', name, id: callId, arguments: args, raw: params, ...(mirror ? { mirror: true } : {}) })
+      if (!mirror && this.surfaceToolEvents && this.eventDisplay === 'reasoning' && this.forwardReasoning) {
         const label = `🔧 ${name}(${safeArgs(args)})\n`
         if (!reasoning.started) {
           reasoning.started = true
@@ -366,9 +380,33 @@ export class AgentCoreTransport {
       }
     }
 
+    // Native agent-core capabilities ask dsh: permission (gate rail) / interaction (interrupt rails).
+    // Fail closed: no interactive host → deny.
+    const handleHostRequest = async (params) => {
+      const callId = params.callId
+      let content
+      try {
+        content = await answerHostRequest(params, turn.interact, signal)
+      } catch (e) {
+        content = { allow: false, outcome: `error: ${String(e?.message || e).slice(0, 200)}` }
+      }
+      emitEvent({ type: 'host_request', kind: params.kind, id: callId, outcome: content?.outcome ?? (content?.answer ? 'answered' : undefined) })
+      try {
+        await this._request('tool.result', { callId, ok: true, content })
+      } catch (e) {
+        this.logger?.warn?.(`[agent-core] host.request reply failed: ${e?.message || e}`)
+      }
+    }
+
     const onEvt = (msg) => {
       if (msg.event === '_process_exit') {
         push({ error: new Error(msg.params?.error || 'sidecar exited') })
+        return
+      }
+      if (msg.event === 'host.request') {
+        Promise.resolve()
+          .then(() => handleHostRequest(msg.params || {}))
+          .catch((e) => this.logger?.warn?.(`[agent-core] host.request handler: ${e?.message || e}`))
         return
       }
       if (msg.event === 'tool.call') {
@@ -463,6 +501,8 @@ export class AgentCoreTransport {
           ...(images.length ? { images } : {}),
           ...(cwd ? { cwd: String(cwd) } : {}),
           ...(turn.plan ? { plan: turn.plan } : {}),
+          ...(turn.features ? { features: turn.features } : {}),
+          ...(turn.runKind ? { runKind: turn.runKind } : {}),
         })
       } catch (e) {
         turnError = e
@@ -554,6 +594,48 @@ function normalizeUsage(payload) {
   const output = Number(u.output_tokens ?? u.completion_tokens ?? u.outputTokens ?? 0)
   const total = Number(u.total_tokens ?? u.totalTokens ?? (input + output))
   return { inputTokens: input, outputTokens: output, totalTokens: total }
+}
+
+/**
+ * Answer a sidecar `host.request` through the dsh interactor (approval cards / question cards).
+ * @returns {Promise<object>} permission → `{ allow, outcome }`; interaction → `{ answer, outcome }`
+ */
+export async function answerHostRequest(params = {}, interact, signal) {
+  const kind = params.kind
+  if (kind === 'permission') {
+    const tool = String(params.tool || 'agent-core-tool')
+    if (typeof interact !== 'function') return { allow: false, outcome: 'no-interactive-host' }
+    const q = { header: `Permission: ${tool}`, question: `agent-core wants to run its native tool \`${tool}\`${params.args && Object.keys(params.args).length ? ` with ${safeArgs(params.args)}` : ''}. Allow once?`, tool_name: tool, tool_payload: params.args || {} }
+    const r = await interact({ eventType: 'chat.ask_user_question', payload: { source: 'permission_interrupt', tool_name: tool, questions: [q] }, signal })
+    const outcome = r?.outcome || 'unavailable'
+    return { allow: outcome === 'allowed-once' || outcome === 'auto-allowed', outcome }
+  }
+  if (kind === 'interaction') {
+    const req = params.request && typeof params.request === 'object' ? params.request : {}
+    if (typeof interact !== 'function') return { answer: { approved: false, feedback: 'No interactive dsh host', answers: {} }, outcome: 'no-interactive-host' }
+    const questions = Array.isArray(req.questions) ? req.questions : []
+    if (questions.length) {
+      // AskUserRail: answers keyed by question text.
+      const r = await interact({ eventType: 'chat.ask_user_question', payload: { source: 'agentcore_ask_user', questions }, signal, told: true })
+      const answers = {}
+      const got = Array.isArray(r?.answers) ? r.answers : []
+      questions.forEach((qq, i) => {
+        const a = got[i] || {}
+        const sel = Array.isArray(a.selected_options) ? a.selected_options.filter(Boolean) : []
+        const text = a.custom_input ? String(a.custom_input) : sel.join(', ')
+        if (text) answers[String(qq.question || qq.header || `q${i + 1}`)] = text
+      })
+      return { answer: { answers }, outcome: Object.keys(answers).length ? 'answered' : (r?.outcome || 'unanswered') }
+    }
+    // ConfirmInterruptRail (or any tool-level confirm): one approval.
+    const tool = String(req.tool_name || 'agent-core-tool')
+    const q = { header: `Permission: ${tool}`, question: String(req.message || `Run \`${tool}\`?`).slice(0, 2000), tool_name: tool, tool_payload: req.tool_args && typeof req.tool_args === 'object' ? req.tool_args : {} }
+    const r = await interact({ eventType: 'chat.ask_user_question', payload: { source: 'confirm_interrupt', tool_name: tool, questions: [q] }, signal })
+    const outcome = r?.outcome || 'unavailable'
+    const approved = outcome === 'allowed-once' || outcome === 'auto-allowed'
+    return { answer: { approved, feedback: approved ? '' : `denied by dsh (${outcome})` }, outcome }
+  }
+  return { allow: false, outcome: `unsupported host request: ${String(kind)}` }
 }
 
 export function normalizeTools(tools) {

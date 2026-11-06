@@ -133,3 +133,36 @@ test('agent-core stream injects active goal into system prompt', async () => {
   assert.ok(sawSystem && /Active goal/.test(sawSystem) && /Ship M4/.test(sawSystem), sawSystem)
   assert.ok(chunks.some(c => c.type === 'text'))
 })
+
+test('agent-core native capabilities: features + hidden host tools; no duplicate skill injection; off by default', async () => {
+  const { resolveAgentcoreFeatures } = await import('../src/agentcore-features.js')
+  const T = (name) => ({ name, description: name, parameters: { type: 'object', properties: {} } })
+  const run = async (agentcore, extra = {}) => {
+    let hooks
+    const Adapter = createJiuwenAdapter(null, {
+      config: () => cfg({ backend: 'agent-core', ...(agentcore ? { agentcore } : {}) }),
+      sessions: {
+        ensure: (id) => ({ dshSessionId: id, jiuwenSessionId: id, updatedAt: '', backendOrigin: 'agent-core', skillBodies: [{ name: 'demo', content: 'UNIQUE-SKILL-BODY' }] }),
+        update: () => {}, recordTurn: () => {},
+      },
+      logger: { warn() {}, error() {}, info() {}, debug() {} },
+      executeTool: async () => ({ content: 'ok' }),
+    })
+    const a = new Adapter()
+    a._agentcoreTransport = () => ({ async *stream(_r, _m, h) { hooks = h; yield { type: 'finish', reason: 'stop' } } })
+    for await (const _ of a.stream({ model: { id: 'm', provider: 'jiuwen' }, messages: [{ role: 'user', content: 'go' }], sessionId: 'feat-sess', tools: [T('skill'), T('todo_write'), T('dsh_echo')], ...extra })) { /* drain */ }
+    return hooks
+  }
+  const off = await run(undefined)
+  assert.equal(off.features, undefined)
+  assert.deepEqual(off.tools.map(t => t.name), ['skill', 'todo_write', 'dsh_echo'])
+  assert.equal(off.runKind, undefined)
+  const on = await run(resolveAgentcoreFeatures({ skills: true, planning: true }, {}), { providerOptions: { jiuwen: { runKind: 'heartbeat' } } })
+  assert.deepEqual(on.tools.map(t => t.name), ['dsh_echo'])
+  assert.equal(on.features.skills.items[0].name, 'demo')
+  assert.equal(on.features.skills.host_loader, 'skill')
+  assert.equal(on.features.planning.mirror_tool, 'todo_write')
+  assert.ok(!String(on.query).includes('UNIQUE-SKILL-BODY'), 'skill body is not injected twice')
+  assert.ok(!String(on.query).includes('demo') || String(off.query).includes('demo'))
+  assert.equal(on.runKind, 'heartbeat')
+})

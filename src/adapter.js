@@ -18,6 +18,7 @@ import { appendFileSync } from 'node:fs'
 import { failureFromError, emitTextReply } from './stream-emit.js'
 import { applySystemInjection, applyFsRouteInjection } from './system-inject.js'
 import { applySkillBodyInjection } from './host-sync.js'
+import { buildTurnFeatures, filterHostTools } from './agentcore-features.js'
 import { toGatewayQuery, contentToText, withInferredRoles } from './messages.js'
 import { fileBlocksFromHandles } from './multimodal.js'
 import { carryBlock } from './busy-interrupt.js'
@@ -310,7 +311,11 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
             if (fs.hash) fsRouteHash = fs.hash
           }
           const exposedNow = mcpAttached ? (deps.mcpBridge.exposed?.(dshSessionId) || []) : []
-          if (!aux && cfg.syncSkillInstall !== false && turnMapping.skillBodies?.length) {
+          // Opt-in native agent-core capabilities: per-turn features + host tools they replace.
+          const acTurn = useAgentCore && !aux ? buildTurnFeatures(cfg.agentcore, { tools: hostTools, mapping: turnMapping, skillLoaderTool: cfg.skillLoaderTool }) : undefined
+          if (acTurn?.features) trace({ at: 'agentcore-features', dshSessionId, features: Object.keys(acTurn.features), hide: [...acTurn.hide] })
+          // Native skills read the same dsh skill bodies through SkillUseRail: no second copy in the query.
+          if (!aux && !acTurn?.nativeSkills && cfg.syncSkillInstall !== false && turnMapping.skillBodies?.length) {
             const loader = cfg.skillLoaderTool && exposedNow.includes(cfg.skillLoaderTool) ? `mcp_${mcpName}_${cfg.skillLoaderTool}` : undefined
             query = applySkillBodyInjection(query, turnMapping, { mode: cfg.hostSkillInject, loaderTool: loader,
               onMissingLoader: () => {
@@ -350,7 +355,7 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
               // Approval cards defer an interrupt-on-busy until answered; question cards are superseded by interaction.js.
               const approvalLike = q?.eventType === 'plan.approval_required' || /^(permission|confirm)_interrupt$|^swarmflow_human$/.test(String(q?.payload?.source || ''))
               deps.busy?.setAwaiting(dshSessionId, approvalLike ? 'approval' : 'question')
-              try { return await deps.interact({ ...q, told: overrides.supportsUserInteraction === true }, dshSessionId) } finally { deps.busy?.setAwaiting(dshSessionId, null) }
+              try { return await deps.interact({ ...q, told: q?.told === true || overrides.supportsUserInteraction === true }, dshSessionId) } finally { deps.busy?.setAwaiting(dshSessionId, null) }
             } } : {}),
             onEvent: (e) => {
               commitInjected()
@@ -396,8 +401,10 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
           const gwStream = useAgentCore
             ? this._agentcoreTransport().stream(request, turnMapping, {
                 ...turnHooks,
-                tools: hostTools,
+                tools: filterHostTools(hostTools, acTurn?.hide),
                 system: acSystem,
+                ...(acTurn?.features ? { features: acTurn.features } : {}),
+                ...(overrides.runKind ? { runKind: overrides.runKind } : {}),
                 model: resolveAgentCoreModel(cfg, options, overrides),
                 cwd: overrides.projectDir || cfg.projectDir || turnMapping.projectDir,
                 plan: (overrides.chatMode || turnMapping.chatMode || cfg.chatMode) === 'agent.plan' || undefined,
@@ -463,6 +470,7 @@ export function turnOverrides(cfg, options) {
     historyMode: req.historyMode ?? cfg.historyMode,
     ...(modelName ? { modelName } : {}),
     ...(typeof req.onEvent === 'function' ? { onEvent: req.onEvent } : {}),
+    ...(['heartbeat', 'cron', 'goal'].includes(req.runKind) ? { runKind: req.runKind } : {}),
   }
 }
 

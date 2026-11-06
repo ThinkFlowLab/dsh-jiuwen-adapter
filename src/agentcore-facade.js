@@ -3,6 +3,7 @@
  * Every ctx.jiuwenAdapter.gateway.* / /jiuwen method resolves here via sidecar
  * RPCs, the session map, or adapter-side state — never silent no-op.
  */
+import { buildTurnFeatures } from './agentcore-features.js'
 import { isAgentCoreBackend, agentcoreUnsupportedError } from './agentcore-api.js'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -348,6 +349,7 @@ export function createAgentCoreFacade(deps) {
       // Without Gateway wiring / env, report capability + host-plugin fallback.
       const providers = [
         { name: 'adapter', available: true, note: 'session map + host memory plugins' },
+        { name: 'agentcore-native', available: getConfig()?.agentcore?.memory?.enabled === true, note: 'agentcore.memory: MemoryRail under the adapter data dir (/jiuwen memory list|search|show|clear)' },
         { name: 'openjiuwen-long-term', available: Boolean(process.env.OPENJIUWEN_MEMORY_ENABLED), note: 'sidecar long_term_memory when enabled' },
         { name: 'mem0', available: Boolean(process.env.MEM0_API_KEY || process.env.MEM0_API_BASE), note: 'needs MEM0_* env; else use host plugins' },
         { name: 'lakebase', available: Boolean(process.env.LAKEBASE_URL || process.env.LAKEBASE_API_KEY), note: 'needs LAKEBASE_* env; else gateway' },
@@ -359,6 +361,34 @@ export function createAgentCoreFacade(deps) {
         providers,
         hostPlugins: ['dsh-agent-instructions', 'dsh-session-reference', 'dsh-experimental-session-search'],
       }
+    },
+    /** Native agent-core capabilities: configured features + live sidecar status for a session. */
+    async capabilities(sid) {
+      const cfg = getConfig()
+      const { features } = buildTurnFeatures(cfg.agentcore, {})
+      const jid = jwId(sessions, sid)
+      let live = { active: false }
+      if (jid && getAgentcore?.()?.capabilitiesStatus) {
+        try { live = await getAgentcore().capabilitiesStatus(jid) } catch (e) { live = { active: false, error: String(e?.message || e).slice(0, 200) } }
+      }
+      return { ok: true, configured: features ? Object.keys(features) : [], features: features || {}, session_id: jid, live }
+    },
+    /** /jiuwen memory list|show|search|clear on the adapter-owned agent-core memory store. */
+    async nativeMemory(sid, params = {}) {
+      const cfg = getConfig()
+      const { features } = buildTurnFeatures(cfg.agentcore, {})
+      const m = byDsh(sessions, sid)
+      const op = String(params.op || 'list')
+      if (op === 'clear' && params.confirm !== true) return { ok: false, error: 'clear needs confirm' }
+      return getAgentcore().memoryOp({
+        op,
+        sid: jwId(sessions, sid) || '',
+        ...(m?.projectDir || cfg.projectDir ? { cwd: m?.projectDir || cfg.projectDir } : {}),
+        ...(features?.memory ? { features: { memory: features.memory } } : {}),
+        ...(params.path ? { path: String(params.path) } : {}),
+        ...(params.query ? { query: String(params.query) } : {}),
+        ...(op === 'clear' ? { confirm: true } : {}),
+      })
     },
     async filesList(sid) {
       return { files: [], session_id: jwId(sessions, sid) }
@@ -508,6 +538,8 @@ export function createAgentCoreFacade(deps) {
         'mcp.list': () => api.mcpList(),
         'memory.list': () => api.memoryList(params.session_id),
         'memory.status': () => api.memoryStatus(params.session_id),
+        'agentcore.capabilities': () => api.capabilities(params.session_id),
+        'agentcore.memory': () => api.nativeMemory(params.session_id, params),
         'session.assets.list': () => api.sessionAssetsList(params.session_id),
         'team.list': () => api.teamList(),
         'team.templates.list': () => api.teamTemplatesList(),
