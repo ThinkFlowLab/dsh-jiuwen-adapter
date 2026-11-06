@@ -39,3 +39,6 @@ htmlcov/
 jiuwen-adapter/
 
 reports/live-agentcore-matrix.json
+
+# Local sidecar virtualenv may be a directory or a symlink.
+/.venv-sidecar

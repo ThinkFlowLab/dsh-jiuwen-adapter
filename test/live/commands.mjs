@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Live /jiuwen command pass against a real Gateway answering via the stand-in (run by test/live/run.mjs).
+// Live /jiuwen command pass against the selected backend and a scripted model (test/live/run.mjs).
 // Every turn-control / session command runs on a real Jiuwen session and is read back where Jiuwen exposes it.
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -54,11 +54,20 @@ try {
   } else check('skill-toggle (no skills installed)', true)
   t = await cmd('compact', sid); check('compact (Jiuwen-side)', !bad(t), t)
   const after = await run(sid, 'TAG:c3 after commands'); check('session still answers after the commands', /stand-in reply c3/.test(after), after)
-  t = await cmd('fork', sid); const fid = (t.match(/(dsh-[0-9a-f]{16}|web_[0-9a-z_]+)/g) || []).find(x => x !== jw); if (fid) created.add(fid)
-  check('fork creates a Jiuwen fork', !!fid && (await rows()).some(r => r.session_id === fid), t)
+  t = await cmd('fork', sid); const fid = t.match(/new session_id=([^\s)]+)/)?.[1] || (t.match(/(dsh-[0-9a-f]{16}|web_[0-9a-z_]+)/g) || []).find(x => x !== jw); if (fid) created.add(fid)
+  // Agent-core's raw fork is checkpoint-only, not a new dsh mapping. Verify its
+  // actual cloned history instead of assuming every backend lists unmapped forks.
+  const forkHistory = fid ? await api.gateway.rpc('history.get', { session_id: fid }) : undefined
+  check('fork preserves independent Jiuwen history', !!fid && fid !== jw && JSON.stringify(forkHistory).includes('stand-in reply c3'), t)
   t = await cmd('archive', sid); const arch = JSON.stringify(await api.gateway.rpc('session.archived.list', {}).catch(e => ({ e: e.message })))
   check('archive', !bad(t) && arch.includes(jw), t)
-  t = await cmd('unarchive', sid); check('unarchive', !bad(t) && (await rows()).some(r => r.session_id === jw), t)
+  // Gateway archive releases its resource lock asynchronously. Retry only that busy result.
+  for (let attempt = 0; attempt < 30; attempt++) {
+    t = await cmd('unarchive', sid)
+    if (!/resource operation is already running/i.test(t)) break
+    await sleep(100)
+  }
+  check('unarchive', !bad(t) && (await rows()).some(r => r.session_id === jw), t)
   t = await cmd('delete', sid); check('delete needs confirm', /confirm/i.test(t) && (await rows()).some(r => r.session_id === jw), t)
   t = await cmd('delete confirm', sid); check('delete confirm removes the Jiuwen session + mapping', !(await rows()).some(r => r.session_id === jw) && !api.sessions.get(sid), t)
   for (const l of ['help', 'version', 'models', 'sessions', 'skills', 'agents', 'tools', 'teams', 'permissions', 'plugins', 'mcp', 'heartbeat', 'cron', 'commands', 'templates', 'path', 'locale', 'archived']) {

@@ -1,7 +1,7 @@
 {
   "name": "@dsh-jiuwen/adapter",
   "version": "0.2.0",
-  "description": "JiuwenSwarm as a dsh (DeepSeek Harness) LLM provider: route any dsh agent to a Jiuwen agent/swarm over the Gateway, with /jiuwen commands. Zero dependencies, compatibility-first.",
+  "description": "Compatibility-first dsh provider powered by a local openjiuwen agent-core sidecar; optional JiuwenSwarm Gateway backend.",
   "keywords": [
     "dsh-plugin",
     "dsh-bundle",
@@ -78,7 +78,10 @@
     "test:sidecar": "bash scripts/setup-sidecar && AGENTCORE_FAKE_MODEL=1 .venv-sidecar/bin/python -m pytest -c pytest-sidecar.ini --cov=sidecar --cov-config=.coveragerc --cov-report=term-missing --cov-report=xml:sidecar/coverage.xml --cov-fail-under=90 -q",
     "test:agentcore": "node --test --experimental-test-coverage --test-coverage-include=src/agentcore-transport.js --test-coverage-include=src/agentcore-api.js --test-coverage-include=src/agentcore-facade.js --test-coverage-include=src/agentcore-state.js --test-coverage-lines=90 test/agentcore-transport.test.js test/agentcore-sidecar-integration.test.js test/agentcore-api.test.js test/agentcore-facade.test.js test/agentcore-capabilities.test.js",
     "test:live-agentcore": "node scripts/live-agentcore-matrix.mjs",
-    "guard:live:both": "GUARD_BACKEND=both bash scripts/guard-live.sh"
+    "guard:live:both": "GUARD_BACKEND=both bash scripts/guard-live.sh",
+    "test:e2e": "node test/e2e/run.mjs",
+    "test:e2e:offline": "node --test --test-concurrency=1 test/agentcore-sidecar-integration.test.js test/agentcore-capabilities.test.js test/plugin-compat-matrix.test.js",
+    "test:e2e:live": "JIUWEN_E2E_LIVE=1 node test/e2e/run.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.5",

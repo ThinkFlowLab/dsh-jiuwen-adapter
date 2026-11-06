@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createMcpBridge } from '../src/mcp-bridge.js'
 
-const D = process.env.DSH_PKG_DIR || '/tmp/dshpre/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai'
+const D = process.env.DSH_PKG_DIR || (process.env.DSH_NM ? join(process.env.DSH_NM, '@deepseek-ai') : '/tmp/dshpre/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai')
 const has = ['cordis', 'dsh-tools', 'dsh-user-approval', 'dsh-system-prompt', 'dsh-tool-call-timeout-policy'].every(p => existsSync(join(D, p, 'lib', 'index.js')))
 const load = (p) => import(pathToFileURL(join(D, p, 'lib', 'index.js')).href)
 
