@@ -143,6 +143,9 @@ main()
     assert.deepEqual(calls[0].args, { name: 'demo' })
     assert.deepEqual(calls[1].args, { todos: [{ content: 'Step A', status: 'in_progress' }] })
     assert.ok(events.some(e => e.type === 'tool_call' && e.name === 'todo_write' && e.mirror === true))
+    assert.ok(events.some(e => e.type === 'native_tool_call' && e.name === 'skill_tool'))
+    assert.ok(events.some(e => e.type === 'native_tool_call' && e.name === 'todo_create'))
+    assert.ok(!events.some(e => e.type === 'native_tool_call' && e.name === 'todo_write'))
     assert.equal(asks.length, 0, 'host and internal tools are never re-asked')
 
     const c2 = await collect(t.stream({ messages: [{ role: 'user', content: 'read' }] }, { jiuwenSessionId: 'cap1' }, {

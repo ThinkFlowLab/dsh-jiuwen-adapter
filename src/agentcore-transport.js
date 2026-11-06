@@ -327,6 +327,7 @@ export class AgentCoreTransport {
       else wake = () => resolve(queue.shift())
     })
 
+    const hostToolNames = new Set(normalizeTools(turn.tools ?? options?.tools).map(t => t.name))
     const emitEvent = (e) => {
       try { turn.onEvent?.(e) } catch { /* ignore */ }
     }
@@ -425,6 +426,10 @@ export class AgentCoreTransport {
         return
       }
 
+      if ((type === 'tool_call' || type === 'tool_result') && payload?.tool_name && !hostToolNames.has(String(payload.tool_name))) {
+        // Native agent-core tool (skill_tool, todo_*, memory_*, task_tool, …): runs in the sidecar.
+        emitEvent({ type: type === 'tool_call' ? 'native_tool_call' : 'native_tool_result', name: String(payload.tool_name) })
+      }
       if (type === 'llm_output') {
         const delta = extractText(payload)
         if (delta) {

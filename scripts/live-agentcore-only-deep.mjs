@@ -44,7 +44,7 @@ function looksLikeNarration(text) {
   return /Okay,\s*the user|Got it,\s*(let'?s|the user)|用户现在|Let me (check|see|think)/i.test(text || '')
 }
 
-function setupHome(tag = '') {
+function setupHome(tag = '', agentcore = null) {
   const HOME = mkdtempSync(join(tmpdir(), `dsh-fu-acdeep${tag}-`))
   const profile = `jw-ac-deep${tag}`
   const env = { ...process.env, HOME, PATH: `${dirname(DSH)}:${process.env.PATH}` }
@@ -62,7 +62,7 @@ function setupHome(tag = '') {
     emitUsage: true
     forwardReasoning: false
     traceFile: true
-- id: agent-default-model
+${agentcore ? `    agentcore: ${JSON.stringify(agentcore)}\n` : ''}- id: agent-default-model
   config:
     provider: jiuwen
     model: jiuwen-default
@@ -518,6 +518,71 @@ async function sectionSoftPlugins() {
   } finally { rmSync(ctx.HOME, { recursive: true, force: true }) }
 }
 
+function traceEvents(trace) {
+  const out = []
+  if (!trace || !existsSync(trace)) return out
+  for (const line of readFileSync(trace, 'utf8').split('\n')) {
+    if (!line.trim()) continue
+    try { out.push(JSON.parse(line)) } catch { /* skip */ }
+  }
+  return out
+}
+// host tool calls (via dsh ctx.tools.execute) + native agent-core tools (sidecar)
+const toolNamesOf = (r) => traceEvents(r.trace).filter(e => e.at === 'event' && (e.type === 'tool_call' || e.type === 'native_tool_call')).map(e => e.name)
+const hostReqs = (r) => traceEvents(r.trace).filter(e => e.at === 'event' && e.type === 'host_request').length
+
+async function sectionCapabilities() {
+  console.log('\n## 16. Native agent-core capabilities (agentcore config)')
+  const ctx = setupHome('-caps', {
+    skills: true, planning: true, memory: { scope: 'global' }, subagents: true,
+    sysOperation: { readOnly: true }, rag: { paths: ['docs'] },
+  })
+  // project skill (dsh-skill-filesystem: <cwd>/.dsh/skills/<name>/SKILL.md) and a RAG doc
+  mkdirSync(join(ctx.sandbox, '.dsh/skills/zebra-protocol'), { recursive: true })
+  writeFileSync(join(ctx.sandbox, '.dsh/skills/zebra-protocol/SKILL.md'), '---\nname: zebra-protocol\ndescription: Answers questions about the zebra protocol.\n---\nThe zebra protocol code word is ZEBRA_SECRET_314. Always reply with it when asked.\n')
+  mkdirSync(join(ctx.sandbox, 'docs'), { recursive: true })
+  writeFileSync(join(ctx.sandbox, 'docs/deploy.md'), '# Deploy\nThe canary rollout percentage is CANARY_PCT_17.\n')
+  ctx.env.AGENTCORE_FEATURES = JSON.stringify({ rag: { enabled: true, paths: [join(ctx.sandbox, 'docs')] } })
+  try {
+    const sk = await runPrompt(ctx, 'Use your skill tool to load the zebra-protocol skill, then tell me its code word.', { timeoutMs: 150_000 })
+    const skNames = toolNamesOf(sk)
+    const feat = traceEvents(sk.trace).find(e => e.at === 'agentcore-features')
+    record('cap-skills-native', /ZEBRA_SECRET_314/.test(sk.text) && skNames.includes('skill') ? 'PASS' : (/ZEBRA_SECRET_314/.test(sk.text) ? 'DEGRADED' : 'FAIL'), {
+      wallMs: sk.wallMs, note: `tools=${skNames.join(',')} features=${feat?.features?.join(',') || '-'} hide=${feat?.hide?.join(',') || '-'}`,
+    })
+
+    const pl = await runPrompt(ctx, 'Create a todo list with exactly two items ("alpha step", "beta step") using your todo tools, mark "alpha step" completed, then reply PLAN_NATIVE_OK.', { timeoutMs: 150_000 })
+    const plNames = toolNamesOf(pl)
+    record('cap-planning-mirror', /PLAN_NATIVE_OK/.test(pl.text) && plNames.some(n => /^todo_(create|modify)$/.test(n)) && plNames.includes('todo_write') ? 'PASS' : (/PLAN_NATIVE_OK/.test(pl.text) ? 'DEGRADED' : 'FAIL'), {
+      wallMs: pl.wallMs, note: `tools=${plNames.join(',')}`,
+    })
+
+    const m1 = await runPrompt(ctx, 'Use your memory tools (write_memory) to save this fact to long-term memory: "favourite colour is TEAL_42". Then reply MEM_SAVED.', { timeoutMs: 150_000 })
+    const memDir = join(ctx.ckpt, 'memory/global/memory')
+    const onDisk = existsSync(memDir) && readdirSync(memDir, { recursive: true }).some(f => String(f).endsWith('.md') && /TEAL_42/.test(readFileSync(join(memDir, String(f)), 'utf8')))
+    const m2 = await runPrompt(ctx, 'In a fresh context: search your long-term memory (memory_search) for my favourite colour and reply with the exact token.', { timeoutMs: 150_000 })
+    record('cap-memory-persist', onDisk && /TEAL_42/.test(m2.text) ? 'PASS' : (onDisk || /TEAL_42/.test(m2.text) ? 'DEGRADED' : 'FAIL'), {
+      wallMs: m1.wallMs + m2.wallMs, note: `onDisk=${onDisk} tools1=${toolNamesOf(m1).join(',')} tools2=${toolNamesOf(m2).join(',')} (keyword mode: no embedding endpoint)`,
+    })
+
+    const rg = await runPrompt(ctx, 'Use knowledge_search to find the canary rollout percentage in the docs and reply with the exact token.', { timeoutMs: 150_000 })
+    record('cap-rag', /CANARY_PCT_17/.test(rg.text) && toolNamesOf(rg).includes('knowledge_search') ? 'PASS' : (/CANARY_PCT_17/.test(rg.text) ? 'DEGRADED' : 'FAIL'), {
+      wallMs: rg.wallMs, note: `tools=${toolNamesOf(rg).join(',')}`,
+    })
+
+    const gt = await runPrompt(ctx, 'Use the native read_file tool (not a dsh tool) to read NEEDLE.txt. If the call is denied, say GATE_DENIED; otherwise reply with the file content.', { timeoutMs: 150_000 })
+    record('cap-gate-native-io', hostReqs(gt) > 0 || !toolNamesOf(gt).includes('read_file') ? 'PASS' : 'FAIL', {
+      wallMs: gt.wallMs, note: `hostRequests=${hostReqs(gt)} tools=${toolNamesOf(gt).join(',')} text=${JSON.stringify((gt.text || '').slice(0, 60))}`,
+    })
+
+    const sa = await runPrompt(ctx, 'Call task_tool with subagent_type "general-purpose" and task_description "Run the shell command `echo SUB_OK_7` with the bash tool and return its output." Do not run bash yourself. Then reply with the subagent output.', { timeoutMs: 200_000 })
+    const saNames = toolNamesOf(sa)
+    record('cap-subagent-dsh-tools', /SUB_OK_7/.test(sa.text) && saNames.includes('task_tool') && saNames.includes('bash') ? 'PASS' : (/SUB_OK_7/.test(sa.text) ? 'DEGRADED' : 'FAIL'), {
+      wallMs: sa.wallMs, note: `tools=${saNames.join(',')} text=${JSON.stringify((sa.text || '').slice(0, 80))}`,
+    })
+  } finally { rmSync(ctx.HOME, { recursive: true, force: true }) }
+}
+
 async function main() {
   if (!existsSync(DSH)) throw new Error('no dsh')
   const jw = loadJiuwenDotEnv()
@@ -555,6 +620,7 @@ async function main() {
     else record('rss-30-turns', 'DEGRADED', { note: 'skipped' })
   }
   if (run('plugins')) await sectionSoftPlugins()
+  if (run('caps')) await sectionCapabilities()
 
   let sumsOk = true
   const after = snapshotSums()
