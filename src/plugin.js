@@ -224,7 +224,11 @@ export function apply(ctx, config = {}) {
           agent,
           signal: info.signal,
         }
-        const result = await runtime.execute(exec)
+        // NDJSON callbacks run outside the agent driver's async context, just
+        // like Gateway MCP callbacks. Preserve native dsh initiator semantics.
+        const run = () => runtime.execute(exec)
+        const live = agent && typeof agents?.withInitiator === 'function' && agents.get?.(agent.id) === agent
+        const result = await (live ? agents.withInitiator(agent, run) : run())
         if (result?.isError) {
           const err = new Error(toolResultText(result) || `tool ${name} failed`)
           err.isError = true
@@ -488,9 +492,13 @@ export function apply(ctx, config = {}) {
     for (const d of disposers) { try { d() } catch { /* ignore */ } }
     disposers.length = 0
     try { registration() } catch { /* already disposed */ }
-    mcpBridge.dispose().catch(() => {})
+    const pending = [mcpBridge.dispose()]
+    // The Python child owns referenced stdio pipes. Leaving it alive prevents
+    // headless dsh from exiting and leaks a process on plugin reload/dispose.
+    if (typeof adapter._agentcore?.shutdown === 'function') pending.push(adapter._agentcore.shutdown())
     listeners.clear?.()
     personaCapture.dispose()
+    return Promise.allSettled(pending)
   }
   if (typeof ctx.effect === 'function') {
     ctx.effect(function* () { yield disposeAll }, 'llm-jiuwen')

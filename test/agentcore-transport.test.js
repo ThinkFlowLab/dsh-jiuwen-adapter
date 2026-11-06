@@ -533,3 +533,46 @@ test('stripNullishArgs drops null/undefined optionals', () => {
   assert.deepEqual(stripNullishArgs(null), {})
 })
 
+
+test('concurrent sessions isolate chunks, host tool execution and native approvals', async () => {
+  const code = `
+    import readline from 'node:readline';
+    const write=o=>process.stdout.write(JSON.stringify(o)+'\\n');
+    const starts=[], replies=new Set();
+    readline.createInterface({input:process.stdin}).on('line',line=>{
+      const m=JSON.parse(line);
+      if(m.method==='turn.start') {
+        starts.push(m);
+        if(starts.length===2) for(const x of starts) {
+          const sid=x.params.sid;
+          write({event:'tool.call',params:{sid,callId:'tool-'+sid,name:'echo',args:{owner:sid}}});
+          write({event:'host.request',params:{sid,callId:'ask-'+sid,kind:'permission',tool:'native_probe',args:{}}});
+        }
+      } else if(m.method==='tool.result') {
+        replies.add(m.params.callId);
+        write({id:m.id,result:{ok:true}});
+        if(replies.size===4) for(const x of starts) {
+          const sid=x.params.sid;
+          write({event:'chunk',params:{sid,type:'llm_output',payload:{output:'ONLY_'+sid}}});
+          write({id:x.id,result:{ok:true}});
+        }
+      } else write({id:m.id,result:{ok:true,pong:true,version:1}});
+    });
+  `
+  const calls = [], asks = []
+  const t = new AgentCoreTransport({
+    spawnImpl: (_cmd, _args, opts) => spawn(process.execPath, ['--input-type=module','-e',code], opts),
+    executeTool: async (_name, args, info) => { calls.push([args.owner,info.dshSessionId]); return 'ok' },
+    logger: { warn() {}, error() {} },
+  })
+  try {
+    const run = sid => collect(t.stream({sessionId:'host-'+sid,messages:[{role:'user',content:'go'}]}, {jiuwenSessionId:sid}, {
+      query:'go', interact:async()=>{asks.push(sid);return {outcome:'rejected'}},
+    }))
+    const [a,b]=await Promise.all([run('A'),run('B')])
+    const text=cs=>cs.filter(c=>c.type==='text-delta').map(c=>c.text).join('')
+    assert.equal(text(a),'ONLY_A'); assert.equal(text(b),'ONLY_B')
+    assert.deepEqual(calls.sort(),[['A','host-A'],['B','host-B']])
+    assert.deepEqual(asks.sort(),['A','B'])
+  } finally { await t.shutdown() }
+})

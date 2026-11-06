@@ -139,7 +139,7 @@ main()
       interact: async (q) => { asks.push(q); return { outcome: 'rejected' } },
     }))
     assert.equal(c1.at(-1).reason.kind, 'stop')
-    assert.deepEqual(calls.map(c => c.name), ['skill', 'todo_write'])
+    assert.deepEqual(calls.map(c => c.name), ['skill', 'todo_write'], JSON.stringify(events.filter(e => e.type === 'chunk' && /tool/.test(e.chunkType)).map(e => e.payload)))
     assert.deepEqual(calls[0].args, { name: 'demo' })
     assert.deepEqual(calls[1].args, { todos: [{ content: 'Step A', status: 'in_progress' }] })
     assert.ok(events.some(e => e.type === 'tool_call' && e.name === 'todo_write' && e.mirror === true))

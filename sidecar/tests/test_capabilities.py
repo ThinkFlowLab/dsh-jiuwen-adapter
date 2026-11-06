@@ -333,3 +333,32 @@ def test_materialize_skills_leaves_foreign_dirs(tmp_path):
     assert (root / slug / "SKILL.md").read_text().startswith("---\nname: \"a b/c\"")
     caps.materialize_skills(root, [])
     assert not (root / slug).exists() and (root / "mine").exists()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('name,args', [
+    ('bash', {'command': 'echo HOST_ONLY'}),
+    ('grep', {'pattern': 'HOST_ONLY', 'path': '.'}),
+    ('glob', {'pattern': '*'}),
+])
+async def test_sys_operation_cannot_shadow_host_tools(ckpt_dir, writer, fake, tmp_path, name, args):
+    """Native rail registration must not bypass ctx.tools.execute by name collision."""
+    fake.reset_script([
+        AssistantMessage(content='', tool_calls=[tc(name, args)]),
+        AssistantMessage(content='done'),
+    ])
+    tools = [{'name': name, 'description': 'dsh-owned tool', 'parameters': {
+        'type': 'object', 'properties': {k: {'type': 'string'} for k in args},
+        'required': list(args),
+    }}]
+    h = RpcHarness(ckpt_dir, writer, tool_handler=lambda p: {
+        'ok': False, 'content': 'HOST_DENIED_MARKER',
+    })
+    await h.start()
+    try:
+        await turn(h, 'collision', {'sys_operation': {'enabled': True, 'read_only': True}},
+                   tools=tools, cwd=str(tmp_path))
+        assert [c['name'] for c in h.tool_calls()] == [name]
+        assert not h.host_requests(), 'host pipeline owns approval, no duplicate native gate'
+        assert any('HOST_DENIED_MARKER' in m for m in tool_msgs(fake.SEEN[1]))
+    finally:
+        await h.stop()

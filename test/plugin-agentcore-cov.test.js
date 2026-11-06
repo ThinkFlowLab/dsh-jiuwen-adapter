@@ -105,3 +105,44 @@ test('plugin agent-core commandGateway Proxy + cancel + apply trace', async () =
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('agent-core host callbacks re-enter the exact live dsh initiator', async () => {
+  const { AsyncLocalStorage } = await import('node:async_hooks')
+  const store = new AsyncLocalStorage()
+  const dir = mkdtempSync(join(tmpdir(), 'plug-ac-initiator-'))
+  const agent = { id: 'host-session' }
+  const seen = []
+  const agents = { get: id => id === agent.id ? agent : undefined, withInitiator: (a, run) => store.run(a, run) }
+  const tools = { execute: async exec => {
+    assert.equal(exec.agent, agent)
+    assert.equal(store.getStore(), agent)
+    seen.push(exec.arguments)
+    return { content: [{ type: 'text', text: 'host result' }] }
+  } }
+  const { ctx, adapters, hooks } = makeCtx({ tools, agents })
+  plugin.apply(ctx, { backend: 'agent-core', hostSync: false, sessionSync: false, planBridge: false, mappingPath: join(dir, 'map.json') })
+  const transport = adapters.get('jiuwen')._agentcoreTransport()
+  try {
+    const r = await transport.executeTool('read', { path: '/fixture', optional: null }, { dshSessionId: agent.id })
+    assert.equal(r, 'host result')
+    assert.deepEqual(seen, [{ path: '/fixture' }])
+    assert.equal(store.getStore(), undefined)
+  } finally {
+    await transport.shutdown()
+    for (const fn of hooks.dispose || []) fn()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('plugin disposal shuts down an existing sidecar exactly once without starting one', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'plug-ac-dispose-'))
+  const { ctx, adapters, hooks } = makeCtx()
+  plugin.apply(ctx, { backend:'agent-core',hostSync:false,sessionSync:false,planBridge:false,mappingPath:join(dir,'map.json') })
+  let closed=0
+  adapters.get('jiuwen')._agentcore={shutdown:async()=>{closed++}}
+  try {
+    for(const fn of hooks.dispose || []) await fn()
+    for(const fn of hooks.dispose || []) await fn()
+    assert.equal(closed,1)
+  } finally { rmSync(dir,{recursive:true,force:true}) }
+})

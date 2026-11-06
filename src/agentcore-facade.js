@@ -108,7 +108,7 @@ export function createAgentCoreFacade(deps) {
         sessions.update(m.dshSessionId, { archived: true, active: false })
         out.push(m.jiuwenSessionId)
       }
-      return { ok: true, session_ids: out }
+      return { ok: true, session_ids: out, succeeded_count: out.length, failed_count: 0, results: out.map(session_id => ({ session_id, ok: true, archived: true })) }
     },
     async sessionUnarchive(sid) {
       const ids = Array.isArray(sid) ? sid : [sid]
@@ -118,7 +118,7 @@ export function createAgentCoreFacade(deps) {
         sessions.update(m.dshSessionId, { archived: false })
         out.push(m.jiuwenSessionId)
       }
-      return { ok: true, session_ids: out }
+      return { ok: true, session_ids: out, succeeded_count: out.length, failed_count: 0, results: out.map(session_id => ({ session_id, ok: true, restored: true })) }
     },
     async sessionMetadata(sid) {
       const m = byDsh(sessions, sid)

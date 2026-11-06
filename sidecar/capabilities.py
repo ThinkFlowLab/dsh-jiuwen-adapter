@@ -730,7 +730,24 @@ def assemble(
     so = features["sys_operation"]
     if so["enabled"]:
         from openjiuwen.harness.rails import SysOperationRail
-        out.rails.append(SysOperationRail(with_code_tool=so["code"], read_only=so["read_only"]))
+        class DshSysOperationRail(SysOperationRail):
+            """Native rails must never replace an identically named dsh callback.
+
+            SysOperationRail registers bash/glob/grep even in read_only mode.
+            Restore colliding host LocalFunctions before the first model call;
+            otherwise the name-based gate mistakes native IO for a host tool.
+            """
+            def init(self, agent):
+                super().init(agent)
+                by_name = {t.card.name: t for t in host_tools}
+                for tool in self.tools or []:
+                    if tool.card.name in by_name:
+                        host = by_name[tool.card.name]
+                        agent.ability_manager.remove_ability(tool.card.name)
+                        agent.ability_manager.add_ability(host.card, host)
+                self.tools = [t for t in self.tools or [] if t.card.name not in by_name]
+
+        out.rails.append(DshSysOperationRail(with_code_tool=so["code"], read_only=so["read_only"]))
         out.kwargs["restrict_to_work_dir"] = True
         if cwd:
             out.kwargs["cwd"] = cwd

@@ -404,6 +404,9 @@ export class AgentCoreTransport {
         push({ error: new Error(msg.params?.error || 'sidecar exited') })
         return
       }
+      // One sidecar serves concurrent sessions; never consume another turn's
+      // chunks, approvals or host callbacks (which would execute tools twice).
+      if (msg.params?.sid && msg.params.sid !== sid) return
       if (msg.event === 'host.request') {
         Promise.resolve()
           .then(() => handleHostRequest(msg.params || {}))
