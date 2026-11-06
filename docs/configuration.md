@@ -1,5 +1,9 @@
 # Configuration reference
 
+The default product backend is **agent-core**, not the WebSocket Gateway. No
+Gateway or AgentServer is required. The legacy name `mode: gateway` means product
+mode; select the implementation using `backend`.
+
 Precedence: **environment variable > Cordis plugin config > default** (`provider` / `displayName` / `models` / `defaultModel` come from plugin config only).
 
 | Plugin key | Env | Default | Meaning |
@@ -9,6 +13,9 @@ Precedence: **environment variable > Cordis plugin config > default** (`provider
 | `mode` | `JIUWEN_MODE` | `gateway` | `gateway` (product, Jiuwen brain) / `openai` (diagnostics; aliases `llm`, `completions`) |
 | `backend` | `JIUWEN_BACKEND` | `agent-core` | When `mode=gateway`: `agent-core` (local sidecar, default) or `gateway` (Jiuwen WS). |
 | `agentcore` | `AGENTCORE_FEATURES` (JSON) | all off | Opt-in native agent-core capabilities (skills, planning, memory, subagents, …). See [agentcore-capabilities.md](./agentcore-capabilities.md) |
+| `gatewayFallback` | `JIUWEN_GATEWAY_FALLBACK=1` | `false` | Explicitly allow marked Gateway-only methods to route to a reachable Gateway; normal chat stays agent-core |
+| `agentcorePython` | `AGENTCORE_PYTHON` | `<package>/.venv-sidecar/bin/python` | Sidecar interpreter; run `npm run sidecar:setup` first |
+| `agentcoreCheckpointDir` | `DSH_JIUVEN_AC_DIR`, then `AGENTCORE_CKPT_DIR` | $DSH_HOME/jiuwen-adapter/ac | SQLite checkpoints, workspaces, memory, RAG and traces |
 | `gatewayURL` | `JIUWEN_GATEWAY_URL` | `ws://127.0.0.1:19000/ws` | Gateway WebSocket |
 | `baseURL` | `JIUWEN_BASE_URL` | `http://127.0.0.1:18080/v1` | OpenAI-compatible root (openai mode only) |
 | `apiKey` | `JIUWEN_API_KEY` or `$apiKeyEnv` | — | Bearer key for openai mode |
@@ -29,7 +36,7 @@ Precedence: **environment variable > Cordis plugin config > default** (`provider
 | `exposeJiuwenTools` | `JIUWEN_EXPOSE_TOOLS=1` | `false` | Enable `bridge.listJiuwenTools()` discovery |
 | `surfaceGatewayToolEvents` | — | `true` | Render Jiuwen tool/subtask events as text markers |
 | `eventDisplay` | `JIUWEN_EVENT_DISPLAY` | `reasoning` (`none` if `surfaceGatewayToolEvents: false`) | Jiuwen tool/subtask activity: `reasoning` block / legacy text `markers` / `none` |
-| `forwardReasoning` | `JIUWEN_FORWARD_REASONING=0` disables | `true` | `chat.reasoning` → `reasoning-delta` |
+| `forwardReasoning` | `JIUWEN_FORWARD_REASONING=0` disables | `true` | Render available reasoning events as `reasoning-delta`; model reasoning generation is separately disabled by default |
 | `showProcessingStatus` | `JIUWEN_SHOW_PROCESSING_STATUS=1` | `false` | Show `chat.processing_status` (filtered by default) |
 | `emitUsage` | — | `true` | Emit `usage` chunk from `chat.usage_summary` |
 | `historyMode` | `JIUWEN_HISTORY_MODE` | `gateway` | `gateway`: after turn 1 send only new user text; `transcript`: always recent transcript |
@@ -100,7 +107,7 @@ Precedence: **environment variable > Cordis plugin config > default** (`provider
 | `llmAdapterModule` | `JIUWEN_LLM_ADAPTER_MODULE` | — | Explicit module/path exporting `LlmAdapter` |
 | — | `DSH_NODE_MODULES` / `DSH_LLM_PATH` / `DSH_CORDIS_PATH` | global npm dsh install | Used by `scripts/cordis-load-smoke.mjs` only |
 
-## Jiuwen global permissions (adapter-owned ledger)
+## Jiuwen global permissions (Gateway backend only)
 
 JiuwenSwarm's tool permissions (`permissions.tools.*`, `~/.jiuwenswarm/config/config.yaml`) are **global**: shared by every session and every client of that JiuwenSwarm (web UI, TUI, other adapters). The Gateway offers no per-session deny (the session layer drops `deny_tools` / `ask_tools`; `run_permissions` / agent definitions apply only to channel `process_cli`), so routing must write global entries. To keep that reversible the adapter records every value it writes in `jiuwen-permissions.json` next to `mappingPath`, per Gateway URL: tool, level written, the level before (`prior`) and the owner (`route` = dsh tool routing, `preset` = dsh permission-preset mirror).
 
@@ -120,8 +127,12 @@ Auth resolution order (matches Jiuwen web_proxy): query `access_token`/`token` �
       name: '@dsh-jiuwen/adapter'
       config:
         provider: jiuwen
-        mode: gateway
-        gatewayURL: ws://127.0.0.1:19000/ws
+        backend: agent-core
+        gatewayFallback: false
+        agentcore:
+          skills: true
+          planning: true
+          memory: { scope: global }
         userId: alice
         workMode: agent
         requestTimeoutMs: 180000
@@ -131,7 +142,31 @@ Auth resolution order (matches Jiuwen web_proxy): query `access_token`/`token` �
   config: { provider: jiuwen, model: jiuwen-default }
 ```
 
-## JiuwenSwarm model config (`~/.jiuwenswarm/config/.env`)
+## Agent-core model and storage settings
+
+The sidecar resolves the model endpoint from `AGENTCORE_API_BASE` → `API_BASE` →
+Jiuwen dotenv `API_BASE` → plugin `baseURL` (diagnostic placeholder ignored).
+Credentials resolve from `JIUWEN_API_KEY` → `API_KEY` → Jiuwen dotenv; `apiKeyEnv`
+can name a different variable. Model aliases such as `jiuwen-default` resolve from
+`AGENTCORE_MODEL` → `MODEL_NAME` → dotenv `MODEL_NAME`.
+`AGENTCORE_ENDPOINT_PROFILE` overrides the endpoint dialect. Reasoning generation
+is disabled unless `AGENTCORE_REASONING=enabled` is set; `forwardReasoning` controls
+rendering separately.
+
+`AGENTCORE_FEATURES` is a JSON object merged **top-level key by key**, not deep-merged,
+over `agentcore`. Every option, including nested memory/MCP/MoA/OTEL settings, is
+listed in [agentcore-capabilities.md](./agentcore-capabilities.md).
+`AGENTCORE_WORKSPACE_MODE=cwd` restores the old project-root workspace behavior;
+otherwise workspaces stay under the checkpoint directory. Persistent memory may
+contain private project information: protect and back up that directory.
+
+Gateway-only settings below (authentication, WS timing/recovery, global permission
+ledger, MCP proxy registration, SwarmFlow) are inert for normal agent-core turns.
+Agent-core tools use direct host callbacks, not the Gateway MCP proxy.
+For migration, retain `backend: gateway` if Gateway history must remain available;
+agent-core starts its own checkpoint history and never imports Gateway history.
+
+## Optional JiuwenSwarm model config (`~/.jiuwenswarm/config/.env`)
 
 Never commit this file. Fields:
 

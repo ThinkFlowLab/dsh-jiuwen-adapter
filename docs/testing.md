@@ -1,5 +1,17 @@
 # Testing
 
+## Current default backend
+
+The default agent-core backend needs no Gateway. Start with the committed
+[agent-core E2E guide](./e2e.md): offline CI lane, isolated real-dsh live lane,
+preconditions, snapshot/restore and exact assertions. `npm run test:e2e` skips
+without explicit live opt-in; failures after prerequisites pass are real failures.
+
+The legacy Gateway/nightly suites below exercise additional integration surfaces,
+not a requirement for agent-core. Historical counts are not current acceptance results.
+
+## Legacy suites
+
 ## Test guard at a glance
 
 | Where | What runs | Fails when |

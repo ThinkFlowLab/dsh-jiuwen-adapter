@@ -135,7 +135,7 @@ Frontend-changeable settings that apply in jiuwen sessions (see [host-sync.md](.
 
 ## Parity checklist
 
-Every Gateway-backed feature has a native agent-core implementation (sidecar RPC, session map, or `agentcore-state.json`). Soft-no-op is not used.
+Common dsh features use the sidecar, session map, or adapter state. Registry/list parity does not imply native execution parity: Gateway-only boundaries are listed below.
 
 | Feature | Gateway | agent-core | Unit / compat test | Live |
 |---|---|---|---|---|

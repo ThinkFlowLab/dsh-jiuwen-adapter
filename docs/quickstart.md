@@ -1,100 +1,88 @@
 # Quickstart (Mac / Linux)
 
-Every command below was run in order on a fresh Linux box (2026-10-29: Node 22.21, Python 3.13, uv, dsh 0.2.1-rc.2, workswarm 0.2.7) and produced a real reply. Mac variants are noted inline.
+## 1. Install
 
-## 0. Prerequisites
-
-| Dependency | Version | Check |
-|---|---|---|
-| Node.js | **≥ 22** | `node --version` |
-| Python | **3.11–3.14** (JiuwenSwarm) | `python3 --version` |
-| uv (recommended) or pip | any | `uv --version` |
-| git | any | `git --version` |
+Use Node ≥22, Python 3.13 and dsh `>=0.2.1-rc.2 <0.3.0`. `uv` is recommended;
+otherwise `scripts/setup-sidecar` uses Python's venv/pip. No Gateway is required.
 
 ```bash
-# macOS
-brew install node@22 python@3.13 uv git
-# Debian/Ubuntu
-sudo apt-get install -y python3 python3-venv git && curl -LsSf https://astral.sh/uv/install.sh | sh
-# Node 22: https://nodejs.org or `nvm install 22`
-```
-
-## 1. Install and start JiuwenSwarm (the agent brain)
-
-```bash
-uv venv ~/jiuwenswarm-venv --python 3.13
-source ~/jiuwenswarm-venv/bin/activate
-uv pip install workswarm            # China mirror: -i https://pypi.tuna.tsinghua.edu.cn/simple
-jiuwenswarm-init                    # first run: creates ~/.jiuwenswarm/
-```
-
-Without uv: `python3 -m venv ~/jiuwenswarm-venv && source ~/jiuwenswarm-venv/bin/activate && pip install workswarm`. From source: clone `openJiuwen-ai/jiuwenswarm` and `uv pip install -e .`.
-
-### Model config: `~/.jiuwenswarm/config/.env`
-
-```dotenv
-# Required (OpenAI-compatible example)
-API_BASE=https://api.deepseek.com
-API_KEY=sk-xxxxxxxxxxxxxxxx                # never commit
-MODEL_NAME=deepseek-chat
-MODEL_PROVIDER=OpenAI                      # OpenAI (compat) or Anthropic
-ENDPOINT_PROFILE=deepseek                  # openai / deepseek / openrouter / siliconflow / dashscope / openai_compatible / ollama / lmstudio / vllm / sglang
-```
-
-You can also set the default model in `~/.jiuwenswarm/config/config.yaml` or the JiuwenSwarm web UI (More → Configuration).
-
-### Start (backend only — no Jiuwen frontend required)
-
-```bash
-jiuwenswarm-start app                 # Gateway ws://127.0.0.1:19000/ws + AgentServer
-ss -ltn | grep 19000                  # Mac: lsof -iTCP:19000 -sTCP:LISTEN
-```
-
-Stop: `jiuwenswarm-stop` (or kill the gateway/agentserver PIDs). Logs: follow the process stdout or your install’s log dir.
-
-## 2. Install dsh (the Cordis host shell)
-
-```bash
-npm install -g @deepseek-ai/dsh       # or: brew install dsh  (needs ≥ 0.2)
-dsh --version
-```
-
-## 3. Add this adapter
-
-```bash
-git clone https://github.com/ThinkFlowLab/dsh-jiuwen-adapter.git && cd dsh-jiuwen-adapter
+npm install -g @deepseek-ai/dsh@next
+git clone https://github.com/ThinkFlowLab/dsh-jiuwen-adapter.git
+cd dsh-jiuwen-adapter
+npm run sidecar:setup
+# Installs pinned openjiuwen 0.1.20.post1 into .venv-sidecar.
 dsh plugin --profile web add "$PWD"
 dsh plugin --profile headless add "$PWD"
-# Pin the default model to jiuwen for both profiles:
-for p in web headless; do
-  printf -- '- id: agent-default-model\n  config:\n    provider: jiuwen\n    model: jiuwen-default\n' \
-    > ~/.dsh/profiles/$p/cordis.patch.yml
-done
 ```
 
-One-shot alternative: `npm run bare-dsh` — see [bare-dsh.md](./bare-dsh.md).
+Keep this checkout and its virtualenv together. For an installed package, run
+`scripts/setup-sidecar` from that package directory; alternatively configure
+`agentcorePython` / `AGENTCORE_PYTHON` with an existing compatible environment.
 
-## 4. Chat
+## 2. Configure a model
+
+Set `API_KEY` securely in the launching environment. Do not put secrets in YAML,
+source control, shell command arguments, or diagnostic output.
 
 ```bash
-dsh --profile headless "Say hello and end with QUICKSTART-OK"
-dsh --profile web --no-open --port 3291    # open the printed http://127.0.0.1:3291/?token=… URL
+export AGENTCORE_API_BASE=https://api.example.com/v1
+export AGENTCORE_MODEL=your-model
+# Optional dialect, e.g. deepseek / openai_compatible:
+export AGENTCORE_ENDPOINT_PROFILE=openai_compatible
 ```
 
-Useful slash commands once chatting: `/jiuwen status`, `/jiuwen models`, `/jiuwen help`. Destructive actions need a trailing `confirm` (e.g. `/jiuwen delete confirm`).
+An existing `~/.jiuwenswarm/config/.env` is also supported (`API_BASE`, `API_KEY`,
+`MODEL_NAME`, `MODEL_PROVIDER`, `ENDPOINT_PROFILE`); installing JiuwenSwarm is not
+necessary. See [configuration](./configuration.md) for precedence.
 
-## 5. Verify
+Append to each profile's **existing** `~/.dsh/profiles/<profile>/cordis.patch.yml`:
+
+```yaml
+- id: llm-jiuwen
+  config:
+    backend: agent-core
+    gatewayFallback: false
+- id: agent-default-model
+  config: { provider: jiuwen, model: jiuwen-default }
+```
+
+## 3. Chat
 
 ```bash
-cd /path/to/dsh-jiuwen-adapter
-npm test                  # unit + mock host
-npm run smoke:live        # against the real Gateway on :19000 (SKIP if offline)
+dsh --profile headless --json "Say hello and end with QUICKSTART_OK"
+dsh --profile web
 ```
 
-## Next
+In the web UI use `/jiuwen status`, `/jiuwen capabilities`, `/jiuwen help`.
+Headless tasks are plain prompts; slash-command text there is not dispatched.
 
-- Every config key: [configuration.md](./configuration.md)
-- Gateway wire + events: [gateway.md](./gateway.md)
-- dsh plugin cooperation: [dsh-integration.md](./dsh-integration.md)
-- Known Gateway limits: [known-issues.md](./known-issues.md)
-- FAQ: [troubleshooting.md](./troubleshooting.md)
+Optional skills, planning, memory, subagents and rails are **off by default**.
+Enable only what you need: [native capabilities](./agentcore-capabilities.md).
+
+## 4. Verify
+
+```bash
+npm test
+npm run test:sidecar
+npm run test:e2e:offline
+DSH_BIN=/path/to/dsh npm run test:e2e:live
+```
+
+The live suite needs model credentials, Linux `ss`, Python, and Gateway :19000 down.
+It uses isolated dsh profiles and restores a checksum-verified Jiuwen snapshot.
+See [E2E instructions](./e2e.md) before testing on a shared box.
+
+## Optional legacy Gateway backend
+
+Install and start your JiuwenSwarm Gateway/AgentServer separately, then set:
+
+```yaml
+- id: llm-jiuwen
+  config:
+    backend: gateway
+    gatewayURL: ws://127.0.0.1:19000/ws
+```
+
+Gateway is needed for team/workflow execution and marketplace operations, not normal
+agent-core chat. Existing Gateway history stays there; switching to agent-core does
+not import it. [Migration and capability boundaries](./agent-core.md).
