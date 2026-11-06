@@ -17,6 +17,7 @@ class RpcHarness:
         *,
         tool_handler: Optional[Callable[[dict], Any]] = None,
         tool_delay: float = 0.0,
+        host_handler: Optional[Callable[[dict], Any]] = None,
     ):
         configure_logging("WARNING")
         self.writer = writer
@@ -24,6 +25,7 @@ class RpcHarness:
         self.responses: Dict[Any, dict] = {}
         self._tool_handler = tool_handler or (lambda p: {"ok": True, "content": {"echo": p.get("args", {})}})
         self._tool_delay = tool_delay
+        self._host_handler = host_handler or (lambda p: {"ok": True, "content": {"allow": False, "outcome": "test-default-deny"}})
         self._req_n = 0
         self._server = NdjsonServer(writer_file=writer, checkpoint_dir=ckpt_dir)
         # Rebind emit so we can intercept tool.call before writing.
@@ -39,6 +41,12 @@ class RpcHarness:
     async def _emit(self, event: str, params: dict) -> None:
         self.events.append({"event": event, "params": params})
         await self._server._write({"event": event, "params": params})
+        if event == "host.request":
+            reply = self._host_handler(params)
+            if reply is None:
+                return
+            await self.mgr.resolve_tool_result(params["callId"], bool(reply.get("ok", True)), reply.get("content"))
+            return
         if event == "tool.call":
             if self._tool_delay:
                 await asyncio.sleep(self._tool_delay)
@@ -86,6 +94,9 @@ class RpcHarness:
                 continue
             out.append(e["params"])
         return out
+
+    def host_requests(self) -> List[dict]:
+        return [e["params"] for e in self.events if e.get("event") == "host.request"]
 
     def tool_calls(self) -> List[dict]:
         return [e["params"] for e in self.events if e.get("event") == "tool.call"]

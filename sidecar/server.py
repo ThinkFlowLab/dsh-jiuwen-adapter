@@ -24,6 +24,8 @@ METHODS = {
     "session.delete",
     "session.history",
     "session.compact",
+    "capabilities.status",
+    "memory.op",
     "ping",
     "shutdown",
 }
@@ -137,6 +139,14 @@ class NdjsonServer:
             if method == "session.history":
                 self._require(params, "sid")
                 result = await self._mgr.session_history(params)
+                await self._reply_ok(req_id, result)
+                return
+            if method == "capabilities.status":
+                self._require(params, "sid")
+                await self._reply_ok(req_id, self._mgr.capability_status(params["sid"]))
+                return
+            if method == "memory.op":
+                result = await self._mgr.memory_op(params)
                 await self._reply_ok(req_id, result)
                 return
             if method == "session.compact":

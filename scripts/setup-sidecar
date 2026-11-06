@@ -33,5 +33,14 @@ else
     pytest-cov
 fi
 
+# Optional: OTLP/file trace exporters for `agentcore.otel` (AGENTCORE_SIDECAR_OTEL=1).
+if [[ "${AGENTCORE_SIDECAR_OTEL:-0}" == "1" ]]; then
+  if command -v uv >/dev/null 2>&1; then
+    UV_PYTHON="$VENV/bin/python" uv pip install opentelemetry-exporter-otlp
+  else
+    "$VENV/bin/python" -m pip install opentelemetry-exporter-otlp
+  fi
+fi
+
 echo "sidecar venv ready: $VENV"
 "$VENV/bin/python" -c "import importlib.metadata as m; print('openjiuwen', m.version('openjiuwen'))"
