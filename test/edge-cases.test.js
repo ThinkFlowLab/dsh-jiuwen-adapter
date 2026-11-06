@@ -141,7 +141,7 @@ test('plugin dispose (fallback ctx.on dispose path) unregisters provider and is 
     provide(n, v) { this[n] = v },
     on(n, fn) { (hooks[n] ||= []).push(fn); return () => {} },
   }
-  apply(ctx, { gatewayURL: mock.url, mappingPath: join(mock.dir, `disp-${Math.random()}.json`) })
+  apply(ctx, { backend: 'gateway', gatewayURL: mock.url, mappingPath: join(mock.dir, `disp-${Math.random()}.json`) })
   for (const fn of hooks.dispose || []) fn()
   for (const fn of hooks.dispose || []) fn()
   assert.equal(unregistered, 1)

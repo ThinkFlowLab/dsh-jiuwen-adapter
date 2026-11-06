@@ -10,6 +10,7 @@
  *   openai  — diagnostics / connectivity fallback only (not the product brain).
  */
 import { DEFAULT_BUSY_IGNORE_SOURCES } from './busy-interrupt.js'
+import { resolveAgentcoreFeatures } from './agentcore-features.js'
 
 const DEFAULT_MODELS = [
   { id: 'jiuwen-default', name: 'Jiuwen Default', contextWindow: 128_000, maxTokens: 8192 },
@@ -58,6 +59,11 @@ export function resolveConfig(raw = {}, opts = {}) {
   const mode = modeRaw === 'openai' || modeRaw === 'llm' || modeRaw === 'completions'
     ? 'openai'
     : 'gateway'
+  // Product brain backend when mode=gateway: local agent-core sidecar (default), or classic Jiuwen Gateway WS.
+  const backendRaw = String(env.JIUWEN_BACKEND || raw.backend || 'agent-core').toLowerCase()
+  const backend = (backendRaw === 'gateway' || backendRaw === 'gw' || backendRaw === 'ws')
+    ? 'gateway'
+    : 'agent-core'
 
   const apiKeyEnv = String(raw.apiKeyEnv || 'JIUWEN_API_KEY')
   const apiKey = firstNonEmpty(
@@ -99,6 +105,16 @@ export function resolveConfig(raw = {}, opts = {}) {
     /** ctx service name for the helper API (ctx.jiuwenAdapter). */
     serviceName: String(raw.serviceName || 'jiuwenAdapter'),
     mode,
+    /** agent-core (default) | gateway — which product backend mode=gateway uses. */
+    backend,
+    /**
+     * When backend=agent-core: auto-route marked RPCs to Gateway if reachable.
+     * Default false (agent-core-only). Opt in with gatewayFallback: true or
+     * JIUWEN_GATEWAY_FALLBACK=1 when a Gateway is available.
+     */
+    gatewayFallback: env.JIUWEN_GATEWAY_FALLBACK === '1' || raw.gatewayFallback === true,
+    /** Opt-in openjiuwen agent-core capabilities (skills, planning, memory, subagents, …); all off by default. */
+    agentcore: resolveAgentcoreFeatures(raw.agentcore, env),
     brainOwnership: 'jiuwen',
     baseURL: stripTrailingSlash(String(
       env.JIUWEN_BASE_URL
@@ -121,6 +137,11 @@ export function resolveConfig(raw = {}, opts = {}) {
     defaultModel: String(raw.defaultModel || models[0]?.id || 'jiuwen-default'),
     models,
     mappingPath,
+    /** Absolute path to sidecar python (default: <repo>/.venv-sidecar/bin/python). */
+    agentcorePython: firstNonEmpty(env.AGENTCORE_PYTHON, typeof raw.agentcorePython === 'string' ? raw.agentcorePython : undefined),
+    /** Checkpointer dir for agent-core sidecar (default: $DSH_HOME/jiuwen-adapter/ac). */
+    agentcoreCheckpointDir: firstNonEmpty(env.DSH_JIUVEN_AC_DIR, env.AGENTCORE_CKPT_DIR, typeof raw.agentcoreCheckpointDir === 'string' ? raw.agentcoreCheckpointDir : undefined)
+      || `${dshHome}/jiuwen-adapter/ac`,
     workMode: String(raw.workMode || env.JIUWEN_WORK_MODE || 'agent'),
     projectDir: firstNonEmpty(env.JIUWEN_PROJECT_DIR, typeof raw.projectDir === 'string' ? raw.projectDir : undefined),
     requestTimeoutMs: Number(raw.requestTimeoutMs || env.JIUWEN_TIMEOUT_MS || 180_000),

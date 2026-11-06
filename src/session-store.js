@@ -193,6 +193,14 @@ export class SessionStore {
           ...(Array.isArray(entry.mcpNames) ? { mcpNames: entry.mcpNames.map(String) } : {}),
           ...(Array.isArray(entry.skillBodies) ? { skillBodies: entry.skillBodies } : {}),
           ...(entry.memoryBridge ? { memoryBridge: String(entry.memoryBridge) } : {}),
+          ...(entry.pinned != null ? { pinned: Boolean(entry.pinned) } : {}),
+          ...(entry.archived != null ? { archived: Boolean(entry.archived) } : {}),
+          ...(entry.active != null ? { active: Boolean(entry.active) } : {}),
+          ...(entry.paused != null ? { paused: Boolean(entry.paused) } : {}),
+          ...(entry.goal ? { goal: entry.goal } : {}),
+          ...(entry.mcpMode ? { mcpMode: String(entry.mcpMode) } : {}),
+          ...(entry.backendOrigin ? { backendOrigin: String(entry.backendOrigin) } : {}),
+          ...(entry.permissionPreset ? { permissionPreset: String(entry.permissionPreset) } : {}),
           updatedAt: String(entry.updatedAt || new Date().toISOString()),
         })
       }

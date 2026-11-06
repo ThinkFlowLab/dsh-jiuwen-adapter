@@ -166,9 +166,21 @@ export const EXT = {
     },
   },
   'memory': {
-    usage: 'memory [forbidden|context [status|config|services]]', group: 'Config & policy', methods: ['memory.forbidden.get', 'personal_context.runtime.status'],
-    async run({ g, rest }) {
+    usage: 'memory [forbidden|context [status|config|services]|list|show [file]|search <q>|clear confirm]', group: 'Config & policy', methods: ['memory.forbidden.get', 'personal_context.runtime.status', 'agentcore.memory'],
+    async run({ g, rest, sid }) {
       const what = (rest[0] || 'forbidden').toLowerCase()
+      if (['list', 'show', 'search', 'clear'].includes(what)) {
+        // agent-core native memory (agentcore.memory): adapter-owned store under the data dir.
+        const p = what === 'show' ? { path: rest[1] || 'MEMORY.md' } : what === 'search' ? { query: rest.slice(1).join(' ') } : what === 'clear' ? { confirm: rest[1] === 'confirm' } : {}
+        if (what === 'search' && !p.query) return 'Usage: /jiuwen memory search <query>'
+        if (what === 'clear' && !p.confirm) return 'This deletes the agent-core memory files. Run /jiuwen memory clear confirm'
+        const r = await g.rpc('agentcore.memory', { session_id: sid, op: what, ...p })
+        if (!r?.ok) return `agent-core memory ${what}: ${r?.error || 'failed'}`
+        if (what === 'list') return r.files?.length ? `agent-core memory (${r.files.length} files):\n${r.files.slice(0, 30).map(f => `- ${f.path} (${f.bytes} B)`).join('\n')}` : 'agent-core memory: empty'
+        if (what === 'show') return `agent-core memory ${r.path}:\n${short(r.content, 3000)}`
+        if (what === 'search') return r.hits?.length ? `agent-core memory "${r.query}" (${r.hits.length}, ${r.mode}):\n${r.hits.slice(0, 20).map(h => `- ${h.path}:${h.line} ${short(h.text, 120)}`).join('\n')}` : `agent-core memory: no hits for "${r.query}"`
+        return `agent-core memory cleared (${r.removed} files)`
+      }
       if (what === 'forbidden') {
         const r = await g.rpc('memory.forbidden.get', {})
         return `Jiuwen memory forbidden-list: ${r?.enabled ? 'enabled' : 'disabled'}; patterns: ${(r?.patterns || []).join(', ') || 'none'}`
@@ -187,7 +199,22 @@ export const EXT = {
         const r = await g.rpc('personal_context.runtime.status', {})
         return `Jiuwen personal context: state=${r?.state || '?'}, configured=${r?.configured}, collection=${r?.collection_enabled}, agent_use=${r?.agent_use_enabled}, pipeline_running=${r?.pipeline_running}, context_ready=${r?.context_ready}${r?.last_error ? `, last_error=${short(r.last_error, 80)}` : ''}`
       }
-      return 'Usage: /jiuwen memory [forbidden|context [status|config|services]]'
+      return 'Usage: /jiuwen memory [forbidden|context [status|config|services]|list|show [file]|search <q>|clear confirm]'
+    },
+  },
+  'capabilities': {
+    usage: 'capabilities', group: 'System', methods: ['agentcore.capabilities'],
+    async run({ g, sid }) {
+      const r = await g.rpc('agentcore.capabilities', { session_id: sid })
+      const live = r?.live || {}
+      const info = live.info || {}
+      const lines = [`agent-core native capabilities: ${r?.configured?.length ? r.configured.join(', ') : 'none (set agentcore in plugin config)'}`]
+      if (live.active) {
+        for (const [k, v] of Object.entries(info)) lines.push(`- ${k}: ${j(v, 200)}`)
+        if (live.gateAsked?.length) lines.push(`dsh-gated native tools asked: ${live.gateAsked.join(', ')}`)
+        if (live.tools?.length) lines.push(`agent tools (${live.tools.length}): ${live.tools.slice(0, 40).join(', ')}`)
+      } else lines.push(`(no live agent-core session yet${live.error ? `: ${short(live.error, 120)}` : ''})`)
+      return lines.join('\n')
     },
   },
   'cron get': {

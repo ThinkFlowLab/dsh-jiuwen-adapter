@@ -9,7 +9,7 @@ import { resolveConfig } from '../../src/config.js'
 export function makeRig(raw = {}, deps = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'jw-fake-'))
   const mappingPath = join(dir, 'map.json')
-  let cfg = resolveConfig({ mode: 'gateway', gatewayURL: 'ws://127.0.0.1:1/ws', mappingPath, titleMode: 'local', ...raw }, { env: {} })
+  let cfg = resolveConfig({ mode: 'gateway', backend: 'gateway', gatewayURL: 'ws://127.0.0.1:1/ws', mappingPath, titleMode: 'local', ...raw }, { env: {} })
   let sessions = new SessionStore(mappingPath)
   const sent = []
   let script = () => [{ event: { type: 'text' } }, { end: { reason: { kind: 'stop' } } }]
@@ -35,7 +35,7 @@ export function makeRig(raw = {}, deps = {}) {
   return {
     dir, sent, get sessions() { return sessions },
     setScript(fn) { script = fn },
-    setConfig(patch) { cfg = resolveConfig({ mode: 'gateway', gatewayURL: 'ws://127.0.0.1:1/ws', mappingPath, titleMode: 'local', ...raw, ...patch }, { env: {} }); adapter = build() },
+    setConfig(patch) { cfg = resolveConfig({ mode: 'gateway', backend: 'gateway', gatewayURL: 'ws://127.0.0.1:1/ws', mappingPath, titleMode: 'local', ...raw, ...patch }, { env: {} }); adapter = build() },
     /** Simulate an adapter restart: reload the mapping file from disk. */
     restart() { sessions = new SessionStore(mappingPath); adapter = build() },
     async turn(sessionId, options = {}) {

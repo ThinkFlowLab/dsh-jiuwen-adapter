@@ -1,5 +1,17 @@
 # Testing
 
+## Current default backend
+
+The default agent-core backend needs no Gateway. Start with the committed
+[agent-core E2E guide](./e2e.md): offline CI lane, isolated real-dsh live lane,
+preconditions, snapshot/restore and exact assertions. `npm run test:e2e` skips
+without explicit live opt-in; failures after prerequisites pass are real failures.
+
+The legacy Gateway/nightly suites below exercise additional integration surfaces,
+not a requirement for agent-core. Historical counts are not current acceptance results.
+
+## Legacy suites
+
 ## Test guard at a glance
 
 | Where | What runs | Fails when |
@@ -140,3 +152,11 @@ The stand-in (`test/fixtures/stand-in.mjs`) is started on `STANDIN_PORT` (18999)
 Evidence lands under `examples/` (gitignored).
 
 The mock gateway mirrors live wire shapes (`tool_call.name` nesting, `rendered_result`, `patch_segment` final, `usage_summary`, `processing_status.is_complete`; `slow` for slow streams, `ask me` for questions, `echo-params` echo, `debug.state` RPC). Set `MOCK_STREAM_END=1` to also emit `stream.end`. Use `JIUWEN_GATEWAY_MOCK_SHAPE=0.2.7` for the 0.2.7 response shape.
+
+## Deep stress (local, Gateway down)
+
+`node scripts/live-agentcore-stress-deep.mjs` — concurrency (12+), interleaved
+tool turns, cancel under load, rapid cancel/resume, stream abort, long multi-turn
+latency plus RSS via a long-lived sidecar, capability edges, failure recovery,
+and memory under load. Set `JW_SNAP` to a `scripts/jiuwen-snap.sh` directory.
+`STRESS_ONLY=rss,memload` selects sections.

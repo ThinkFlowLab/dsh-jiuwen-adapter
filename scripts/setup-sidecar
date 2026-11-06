@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Create .venv-sidecar and install openjiuwen + test deps for the agent-core sidecar.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+VENV="${ROOT}/.venv-sidecar"
+PY_VER="${AGENTCORE_PYTHON:-python3.13}"
+
+cd "$ROOT"
+
+if command -v uv >/dev/null 2>&1; then
+  if [[ ! -d "$VENV" ]]; then
+    uv venv "$VENV" --python "${AGENTCORE_PYTHON:-3.13}"
+  fi
+  UV_PYTHON="$VENV/bin/python" uv pip install \
+    "openjiuwen==0.1.20.post1" \
+    aiosqlite \
+    pytest \
+    pytest-asyncio \
+    pytest-cov
+else
+  if [[ ! -d "$VENV" ]]; then
+    "$PY_VER" -m venv "$VENV"
+  fi
+  # shellcheck disable=SC1091
+  source "$VENV/bin/activate"
+  python -m pip install -U pip
+  python -m pip install \
+    "openjiuwen==0.1.20.post1" \
+    aiosqlite \
+    pytest \
+    pytest-asyncio \
+    pytest-cov
+fi
+
+# Optional: OTLP/file trace exporters for `agentcore.otel` (AGENTCORE_SIDECAR_OTEL=1).
+if [[ "${AGENTCORE_SIDECAR_OTEL:-0}" == "1" ]]; then
+  if command -v uv >/dev/null 2>&1; then
+    UV_PYTHON="$VENV/bin/python" uv pip install opentelemetry-exporter-otlp
+  else
+    "$VENV/bin/python" -m pip install opentelemetry-exporter-otlp
+  fi
+fi
+
+echo "sidecar venv ready: $VENV"
+"$VENV/bin/python" -c "import importlib.metadata as m; print('openjiuwen', m.version('openjiuwen'))"

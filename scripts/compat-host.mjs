@@ -75,8 +75,8 @@ let jw = [], jwErr
 async function loadJiuwen() {
   const plugin = await import(pathToFileURL(join(ROOT, 'index.js')).href)
   try {
-    jw.push(ctx.plugin(plugin, { gatewayURL: GW, mappingPath: join(dir, 'a.json'), requestTimeoutMs: 15_000, mode: 'gateway' }))
-    if (args.has('--two')) jw.push(ctx.plugin(plugin, { gatewayURL: GW, mappingPath: join(dir, 'b.json'), provider: 'jiuwen-b', commandName: 'jwb', serviceName: 'jiuwenAdapterB', mode: 'gateway' }))
+    jw.push(ctx.plugin(plugin, { gatewayURL: GW, mappingPath: join(dir, 'a.json'), requestTimeoutMs: 15_000, mode: 'gateway', backend: 'gateway' }))
+    if (args.has('--two')) jw.push(ctx.plugin(plugin, { gatewayURL: GW, mappingPath: join(dir, 'b.json'), provider: 'jiuwen-b', commandName: 'jwb', serviceName: 'jiuwenAdapterB', mode: 'gateway', backend: 'gateway' }))
   } catch (e) { jwErr = String(e?.message || e) }
   await tick(500)
 }

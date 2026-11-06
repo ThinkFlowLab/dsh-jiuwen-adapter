@@ -138,8 +138,8 @@ const jw = []
 async function loadJiuwen() {
   const plugin = await import(pathToFileURL(join(ROOT, 'index.js')).href)
   // hostProfile.groupEvents: the host declares which session event means "group roster changed" (none by default since be6b36a)
-    jw.push(ctx.plugin(plugin, { gatewayURL: GW, mappingPath: join(home, 'jw-a.json'), requestTimeoutMs: 60_000, mode: 'gateway', hostProfile: { groupEvents: ['group/members'] } }))
-  if (TWO) jw.push(ctx.plugin(plugin, { gatewayURL: GW, mappingPath: join(home, 'jw-b.json'), provider: 'jiuwen-b', commandName: 'jwb', serviceName: 'jiuwenAdapterB', mode: 'gateway' }))
+    jw.push(ctx.plugin(plugin, { gatewayURL: GW, mappingPath: join(home, 'jw-a.json'), requestTimeoutMs: 60_000, mode: 'gateway', backend: 'gateway', hostProfile: { groupEvents: ['group/members'] } }))
+  if (TWO) jw.push(ctx.plugin(plugin, { gatewayURL: GW, mappingPath: join(home, 'jw-b.json'), provider: 'jiuwen-b', commandName: 'jwb', serviceName: 'jiuwenAdapterB', mode: 'gateway', backend: 'gateway' }))
   await tick(500)
 }
 
@@ -503,7 +503,7 @@ if (WITH && has('--reload') && !GW.includes(':1/')) reloadOut = await (async () 
     if (i === 1) l0 = snapL() // baseline: no adapter loaded
     const gone = !ctx.llm.listProviders().some(p => p.id === 'jiuwen') && ctx.get('jiuwenAdapter') === undefined
     // hostProfile.groupEvents: the host declares which session event means "group roster changed" (none by default since be6b36a)
-    jw.push(ctx.plugin(plugin, { gatewayURL: GW, mappingPath: join(home, 'jw-a.json'), requestTimeoutMs: 60_000, mode: 'gateway', hostProfile: { groupEvents: ['group/members'] } }))
+    jw.push(ctx.plugin(plugin, { gatewayURL: GW, mappingPath: join(home, 'jw-a.json'), requestTimeoutMs: 60_000, mode: 'gateway', backend: 'gateway', hostProfile: { groupEvents: ['group/members'] } }))
     await tick(500)
     const back = ctx.llm.listProviders().filter(p => p.id === 'jiuwen').length === 1 && ctx.get('jiuwenAdapter') !== undefined
     const sid = `jw-reload-${i}-${Date.now().toString(36)}`; JW_SIDS.add(sid)

@@ -12,6 +12,10 @@ import { SessionStore } from './session-store.js'
 import { createJiuwenAdapter } from './adapter.js'
 import { createToolBridge } from './tool-bridge.js'
 import { GatewayTransport } from './gateway-transport.js'
+import { AgentCoreTransport } from './agentcore-transport.js'
+import { isAgentCoreBackend } from './agentcore-api.js'
+import { createAgentCoreFacade, bindAgentCoreFacade } from './agentcore-facade.js'
+import { createAgentCoreState, statePathFromMapping } from './agentcore-state.js'
 import { createInteractor } from './interaction.js'
 import { createBusyRegistry } from './busy-interrupt.js'
 import { createMcpBridge } from './mcp-bridge.js'
@@ -203,6 +207,41 @@ export function apply(ctx, config = {}) {
     attachments: () => {
       try { return (typeof ctx.get === 'function' ? ctx.get('attachments') : undefined) ?? ctx.attachments } catch { return undefined }
     },
+    /** Host tool runner for agent-core LocalFunction callbacks (ctx.tools.execute). */
+    executeTool: async (name, args, info = {}) => {
+      const tools = service('tools')
+      const agents = service('agents')
+      let agent
+      try { agent = agents?.get?.(info.dshSessionId || info.sessionId) } catch { agent = undefined }
+      // openjiuwen SchemaUtils fills omitted optionals with null; dsh schemas reject null.
+      const cleanArgs = stripNullishToolArgs(args)
+      const runtime = tools && typeof tools.execute === 'function' ? tools : (agent?.ctx?.tools && typeof agent.ctx.tools.execute === 'function' ? agent.ctx.tools : null)
+      if (runtime) {
+        const exec = {
+          callId: info.callId || `ac-${Date.now()}`,
+          name,
+          arguments: cleanArgs,
+          agent,
+          signal: info.signal,
+        }
+        // NDJSON callbacks run outside the agent driver's async context, just
+        // like Gateway MCP callbacks. Preserve native dsh initiator semantics.
+        const run = () => runtime.execute(exec)
+        const live = agent && typeof agents?.withInitiator === 'function' && agents.get?.(agent.id) === agent
+        const result = await (live ? agents.withInitiator(agent, run) : run())
+        if (result?.isError) {
+          const err = new Error(toolResultText(result) || `tool ${name} failed`)
+          err.isError = true
+          throw err
+        }
+        return toolResultText(result) ?? result?.content ?? result
+      }
+      // Legacy: direct definition execute
+      let def
+      try { def = agent ? tools?.get?.(name, agent) : tools?.get?.(name) } catch { def = undefined }
+      if (!def?.execute) throw new Error(`dsh tool ${name} not found`)
+      return def.execute(cleanArgs, { callId: info.callId, name, arguments: cleanArgs, agent, signal: info.signal })
+    },
   })
   const modelDiscovery = createModelDiscovery({ gateway: () => gatewayFor(), config: readConfig })
   const adapter = new AdapterClass()
@@ -211,7 +250,26 @@ export function apply(ctx, config = {}) {
 
   const bridge = createToolBridge(cfg)
   const features = createFeatureCache()
-  const gatewayFor = () => {
+  const agentcoreFor = () => {
+    const c = readConfig()
+    return adapter._agentcoreTransport?.() || new AgentCoreTransport({
+      pythonPath: c.agentcorePython, checkpointDir: c.agentcoreCheckpointDir, logger,
+    })
+  }
+  const acState = createAgentCoreState(statePathFromMapping(readConfig().mappingPath))
+  const acFacade = createAgentCoreFacade({
+    sessions,
+    getConfig: readConfig,
+    getAgentcore: agentcoreFor,
+    state: acState,
+    getHostServices: () => ({
+      skills: service('skills'),
+      planMode: service('planMode'),
+      agents: service('agents'),
+    }),
+    logger,
+  })
+    const gatewayFor = () => {
     const c = readConfig()
     const t = new GatewayTransport({
       gatewayURL: c.gatewayURL,
@@ -237,7 +295,12 @@ export function apply(ctx, config = {}) {
     sessions,
     bridge,
     /** Verify the dsh-tools passthrough registration on the Gateway (mcp.show; never throws). */
-    mcpVerify: (sessionId) => mcpBridge.verify(sessionId),
+    mcpVerify: async (sessionId) => {
+      if (isAgentCoreBackend(readConfig())) {
+        return { ok: true, mode: 'local-function', serverName: readConfig().mcpServerName || 'dsh-tools', sessionId }
+      }
+      return mcpBridge.verify(sessionId)
+    },
     config: readConfig,
     provider: cfg.provider,
     /** Subscribe to structured Jiuwen events ({type, name, ...}); returns unsubscribe. */
@@ -251,15 +314,28 @@ export function apply(ctx, config = {}) {
       supports: (method, params) => { const t = gatewayFor(); return features.probe(readConfig().gatewayURL, (m, p, o) => GatewayTransport.prototype.rpc.call(t, m, p, o), method, params) },
       /** Methods this Gateway answered `unknown method` for (cached). */
       unsupported: () => features.unsupported(readConfig().gatewayURL),
-      historyGet: (sid, extra) => gatewayFor().historyGet(jw(sid), extra),
+      historyGet: async (sid, extra) => {
+        if (isAgentCoreBackend(readConfig())) return agentcoreFor().sessionHistory(jw(sid))
+        return gatewayFor().historyGet(jw(sid), extra)
+      },
       historyListTurns: (sid, extra) => gatewayFor().historyListTurns(jw(sid), extra),
       /** Collect one streamed history.get page (0.2.7: ack + `history.message` events). */
       historyMessages: (sid, extra) => gatewayFor().historyMessages(jw(sid), extra),
       sessionMetadata: (sid, extra) => gatewayFor().sessionMetadata(jw(sid), extra),
       sessionList: (extra) => gatewayFor().sessionList(extra),
       sessionCreate: (extra) => gatewayFor().sessionCreate(extra),
-      sessionDelete: (sid, extra) => gatewayFor().sessionDelete(jw(sid), extra),
-      sessionFork: (sid, extra) => gatewayFor().sessionFork(jw(sid), extra),
+      sessionDelete: async (sid, extra) => {
+        if (isAgentCoreBackend(readConfig())) return agentcoreFor().sessionDelete(jw(sid))
+        return gatewayFor().sessionDelete(jw(sid), extra)
+      },
+      sessionFork: async (sid, extra) => {
+        if (isAgentCoreBackend(readConfig())) {
+          const from = jw(sid)
+          const to = extra?.new_session_id || extra?.to || `fork-${Date.now().toString(36)}`
+          return agentcoreFor().sessionFork(from, to, extra || {})
+        }
+        return gatewayFor().sessionFork(jw(sid), extra)
+      },
       sessionRename: (sid, title, extra) => gatewayFor().sessionRename(jw(sid), title, extra),
       sessionPin: (sid, pinned, extra) => gatewayFor().sessionPin(jw(sid), pinned, extra),
       sessionSwitch: (sid, extra) => gatewayFor().sessionSwitch(jw(sid), extra),
@@ -315,6 +391,10 @@ export function apply(ctx, config = {}) {
       workflows: (sid, action, extra) => gatewayFor().workflows(jw(sid), action, extra),
     },
   }
+  api.gateway = bindAgentCoreFacade(api.gateway, acFacade, readConfig)
+  api.agentcoreState = acState
+  api.backend = () => readConfig().backend || 'gateway'
+  api.isAgentCore = () => isAgentCoreBackend(readConfig())
   exposeService(ctx, cfg.serviceName, api, logger)
 
   // `/jiuwen <sub>` slash command when the host has a command registry (dsh-commands).
@@ -326,7 +406,25 @@ export function apply(ctx, config = {}) {
     titles.rename(live, title)
     return true
   }
-  const command = createJiuwenCommand({ sessions, gateway: gatewayFor, config: readConfig, mcpBridge, features, localRename, permLedger: { ...permLedger, release: async (o) => { const r = await permLedger.release(o); permsKey = null; return r } } })
+  /** Gateway-shaped object for /jiuwen: agent-core routes via api.gateway (clear UNSUPPORTED). */
+  const commandGateway = () => {
+    if (isAgentCoreBackend(readConfig())) {
+      // Full agent-core facade (bound); aliases match GatewayTransport names used by commands.js.
+      const g = api.gateway
+      return new Proxy(g, {
+        get(target, prop, receiver) {
+          if (prop === 'features') return { isUnsupported: () => false }
+          if (prop === 'gatewayURL') return 'agent-core://local'
+          if (prop === 'chatInterrupt') {
+            return (sid, intent, extra) => target.interrupt(sid, intent, extra)
+          }
+          return Reflect.get(target, prop, receiver)
+        },
+      })
+    }
+    return gatewayFor()
+  }
+  const command = createJiuwenCommand({ sessions, gateway: commandGateway, config: readConfig, mcpBridge, features, localRename, permLedger: { ...permLedger, release: async (o) => { const r = await permLedger.release(o); permsKey = null; return r } } })
   api.command = command.run
   if (cfg.registerCommands !== false && typeof ctx.inject === 'function') {
     try {
@@ -367,7 +465,9 @@ export function apply(ctx, config = {}) {
     }
     if (cfg.hostSync !== false) {
       disposers.push(hostSync = installHostSync({
-        ctx, config: readConfig, sessions, gateway: gatewayFor, logger, mcpBridge, permLedger,
+        ctx, config: readConfig, sessions, gateway: gatewayFor, agentcore: agentcoreFor,
+        agentcoreRpc: (method, params) => acFacade.rpc(method, params),
+        logger, mcpBridge, permLedger,
         services: () => ({
           skills: service('skills'),
           planMode: service('planMode'),
@@ -392,9 +492,13 @@ export function apply(ctx, config = {}) {
     for (const d of disposers) { try { d() } catch { /* ignore */ } }
     disposers.length = 0
     try { registration() } catch { /* already disposed */ }
-    mcpBridge.dispose().catch(() => {})
+    const pending = [mcpBridge.dispose()]
+    // The Python child owns referenced stdio pipes. Leaving it alive prevents
+    // headless dsh from exiting and leaks a process on plugin reload/dispose.
+    if (typeof adapter._agentcore?.shutdown === 'function') pending.push(adapter._agentcore.shutdown())
     listeners.clear?.()
     personaCapture.dispose()
+    return Promise.allSettled(pending)
   }
   if (typeof ctx.effect === 'function') {
     ctx.effect(function* () { yield disposeAll }, 'llm-jiuwen')
@@ -402,7 +506,7 @@ export function apply(ctx, config = {}) {
     ctx.on?.('dispose', disposeAll)
   }
 
-  logger.info?.(`[dsh-jiuwen] registered provider "${cfg.provider}" brain=${cfg.brainOwnership} mode=${cfg.mode} mapping=${cfg.mappingPath}`)
+  logger.info?.(`[dsh-jiuwen] registered provider "${cfg.provider}" brain=${cfg.brainOwnership} mode=${cfg.mode} backend=${cfg.backend || "gateway"} mapping=${cfg.mappingPath}`)
 }
 
 /**
@@ -470,3 +574,29 @@ export function hasQuestionAnswerer(ctx) {
     return Array.isArray(h) ? h.length > 0 : Boolean(h && (h.size ?? Object.keys(h).length))
   } catch { return true }
 }
+
+/** Drop null/undefined tool args (openjiuwen fills optionals with null; dsh rejects). */
+function stripNullishToolArgs(args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return args && typeof args === 'object' ? args : {}
+  const out = {}
+  for (const [k, v] of Object.entries(args)) {
+    if (v === null || v === undefined) continue
+    out[k] = v
+  }
+  return out
+}
+
+/** dsh tool results use content[].text (and sometimes error.message), not top-level .text. */
+function toolResultText(result) {
+  if (!result || typeof result !== 'object') return undefined
+  if (typeof result.text === 'string' && result.text) return result.text
+  if (typeof result.error?.message === 'string' && result.error.message) return result.error.message
+  if (Array.isArray(result.content)) {
+    const parts = result.content
+      .filter((b) => b && b.type === 'text' && typeof b.text === 'string')
+      .map((b) => b.text)
+    if (parts.length) return parts.join('\n')
+  }
+  return undefined
+}
+
