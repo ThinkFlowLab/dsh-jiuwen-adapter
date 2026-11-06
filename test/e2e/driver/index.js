@@ -107,7 +107,32 @@ export function apply(ctx) {
       await running
       check('cancel', seen && !/NEVER_FINISH/.test(reply(cancel)))
       check('after-cancel', /AFTER_CANCEL_OK/.test(await prompt(cancel, 'Reply exactly AFTER_CANCEL_OK.')))
+      // Memory clear requires confirm; confirm actually clears.
+      check('memory-clear-requires-confirm', /clear confirm|deletes|confirm/i.test(String(await api.command(mem2, 'memory clear'))) )
+      const cleared = String(await api.command(mem2, 'memory clear confirm'))
+      const afterClear = String(await api.command(mem2, 'memory search TEAL_42'))
+      const afterList = String(await api.command(mem2, 'memory list'))
+      check('memory-clear-confirm', /cleared|removed/i.test(cleared) && (/no hits|empty/i.test(afterClear + afterList) || !/TEAL_42/.test(afterList)))
+      // Missing skill soft-fail
+      const miss = await create()
+      const missText = await prompt(miss, 'Use the skill tool with name definitely-missing-skill-xyz. After the tool returns, reply MISSING_SKILL_OK if it failed or was not found.')
+      check('skill-missing', /MISSING_SKILL_OK|not found|unknown|missing|no such|does not exist|failed|error/i.test(missText) || lastTools.has('skill') || lastTools.has('skill_tool'))
+      // Deny then allow: read-only deny write, then restore and write
+      const da = await create()
+      g('permissionPresets').set(sessions.get(da), 'read-only')
+      g('approval').setPolicy(agent(da), 'never')
+      await prompt(da, `Use write to replace ${join(cwd, 'deny.txt')} with MUTATED_AGAIN. If denied, stop.`)
+      const deniedAgain = lastDenied && readFileSync(join(cwd, 'deny.txt'), 'utf8') === 'KEEP\n'
+      g('permissionPresets').set(sessions.get(da), 'workspace-write')
+      g('approval').setPolicy(agent(da), 'never')
+      await prompt(da, `Use write to create ${join(cwd, 'allow-next.txt')} containing ALLOW_NEXT_3. Reply DONE.`)
+      check('deny-then-allow', deniedAgain && existsSync(join(cwd, 'allow-next.txt')) && readFileSync(join(cwd, 'allow-next.txt'), 'utf8').includes('ALLOW_NEXT_3'))
+      // Capabilities under concurrent sessions
+      const cids = await Promise.all([create(), create(), create(), create()])
+      const caps = await Promise.all(cids.map(id => api.command(id, 'capabilities')))
+      check('capabilities-under-load', caps.every(c => /agent.core|skills|memory/i.test(String(c))))
       // Archive round-trip and explicit destructive confirmation semantics.
+
       const archive = String(await api.command(mem2, 'archive'))
       let unarchive = ''
       for (let n=0;n<30;n++) { unarchive=String(await api.command(mem2,'unarchive')); if (!/resource operation is already running/i.test(unarchive)) break; await sleep(100) }
@@ -115,7 +140,7 @@ export function apply(ctx) {
       check('delete-requires-confirm', /confirm/i.test(String(await api.command(mem2,'delete'))) && !!api.sessions.get(mem2))
       check('delete-confirm', /deleted|cleared/i.test(String(await api.command(mem2,'delete confirm'))) && !api.sessions.get(mem2))
       check('no-cwd-junk', !['AGENT.md','memory','coding_memory','.agent','rag'].some(f=>existsSync(join(cwd,f))))
-    } catch (e) { check('driver-completed', false); console.error('[e2e] driver error:', e.message) }
+    } catch (e) { check('driver-completed', false); try { writeFileSync(process.env.E2E_OUT + '.error', String(e && e.stack || e), { mode: 0o600 }) } catch {} ; console.error('[e2e] driver error:', e.message) }
     finally { writeFileSync(process.env.E2E_OUT, JSON.stringify(results, null, 2)) }
   }, 1000)
 }

@@ -65,8 +65,10 @@ silent model retry.
   are separately forbidden by test policy. Subagent calls `task_tool` and uses dsh bash.
 - Cancellation waits for a real tool call, cancels via `Agent.cancel`, then checks
   a subsequent turn; no timing-only “cancel succeeded” claim.
-- `/jiuwen capabilities`, archive/unarchive, delete refusal without `confirm`, and
-  confirmed deletion. Headless slash text is never mistaken for command execution.
+- `/jiuwen capabilities`, memory clear refusal without `confirm` and confirmed clear,
+  missing-skill soft-fail, deny-then-allow under read-only then workspace-write,
+  capabilities under concurrent sessions, archive/unarchive, delete refusal without
+  `confirm`, and confirmed deletion. Headless slash text is never mistaken for command execution.
 - No `AGENT.md`, memory, coding-memory or RAG junk in the project cwd.
 - Trace evidence for each tool family; Gateway remains down; exact Jiuwen restore.
 

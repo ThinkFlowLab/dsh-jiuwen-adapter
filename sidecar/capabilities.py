@@ -420,6 +420,69 @@ def memory_root(data_dir: Path, scope: str, sid: str, cwd: Optional[str]) -> Pat
     return data_dir / "memory" / "global"
 
 
+
+def make_keyword_memory_search_override(root: Path):
+    """Replace native memory_search with file grep when FTS/vector is unavailable.
+
+    Multiple dsh processes can share one global memory dir; SQLite FTS connections
+    then miss sibling writes even though the .md files are on disk. File grep
+    matches /jiuwen memory search and stays correct across processes.
+    """
+    from openjiuwen.core.foundation.tool import LocalFunction, ToolCard
+    from openjiuwen.harness.rails.base import DeepAgentRail
+
+    mdir = root / "memory"
+
+    async def search(query: str = "", **_kwargs):
+        q = str(query or "").strip()
+        if not q:
+            return {"ok": False, "error": "query required", "hits": []}
+        hits = []
+        ql = q.lower()
+        files = sorted(mdir.rglob("*.md")) if mdir.exists() else []
+        for fp in files:
+            try:
+                lines = fp.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            for i, line in enumerate(lines, 1):
+                if ql in line.lower():
+                    hits.append({"path": str(fp.relative_to(mdir)), "line": i, "text": line.strip()[:200]})
+                    if len(hits) >= 50:
+                        break
+            if len(hits) >= 50:
+                break
+        # Plain text the model can quote; keep structured hits for traces.
+        if not hits:
+            return f'No memory hits for "{q}" (keyword file search).'
+        body = "\n".join(f'- {h["path"]}:{h["line"]} {h["text"]}' for h in hits)
+        return f'Keyword memory hits for "{q}" ({len(hits)}):\n{body}'
+
+    tool = LocalFunction(
+        card=ToolCard(
+            name="memory_search",
+            description="Search long-term memory by keyword over the adapter-owned memory files.",
+            input_params={
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "keyword or phrase"}},
+                "required": ["query"],
+            },
+        ),
+        func=search,
+    )
+
+    class KeywordMemorySearchRail(DeepAgentRail):
+        def init(self, agent):
+            try:
+                agent.ability_manager.remove_ability("memory_search")
+            except Exception:
+                pass
+            agent.ability_manager.add_ability(tool.card, tool)
+            self.tools = [tool]
+
+    return KeywordMemorySearchRail(), tool
+
+
 def make_memory_rails(features: dict, *, data_dir: Path, sid: str, cwd: Optional[str], model_spec: dict, language: str = "cn"):
     from openjiuwen.harness.rails import CodingMemoryRail, MemoryRail
     from openjiuwen.harness.workspace.workspace import Workspace
@@ -705,6 +768,12 @@ def assemble(
     if me["enabled"] or me["coding"] or me["external"]:
         rails, info = make_memory_rails(features, data_dir=data_dir, sid=sid, cwd=cwd, model_spec=model_spec)
         out.rails.extend(rails)
+        # Keyword mode: prefer file-grep memory_search so multi-process writers stay searchable.
+        if me["enabled"] and not info.get("vector"):
+            root = Path(info.get("root") or memory_root(data_dir, me["scope"], sid, cwd))
+            override, _tool = make_keyword_memory_search_override(root)
+            out.rails.append(override)
+            info = {**info, "search": "keyword-file"}
         out.info["memory"] = info
 
     if features["rag"]["enabled"]:

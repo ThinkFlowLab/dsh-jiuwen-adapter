@@ -190,7 +190,9 @@ test('wrapGatewayApiForBackend covers all acRpc methods and gateway passthrough'
   })
   assert.deepEqual(await api.rpc('history.get', { session_id: 'a' }), { h: 'a' })
   assert.deepEqual(await api.rpc('session.fork', { session_id: 'p', new_session_id: 'c' }), { session_id: 'c', from: 'p' })
-  assert.deepEqual(await api.rpc('session.fork', { source_session_id: 'p2' }), { session_id: (await api.rpc('session.fork', { source_session_id: 'p2' })).session_id, from: 'p2' })
+  const forkP2 = await api.rpc('session.fork', { source_session_id: 'p2' })
+  assert.deepEqual(forkP2, { session_id: forkP2.session_id, from: 'p2' })
+  assert.match(forkP2.session_id, /^fork-/)
   // fork without to generates fork-*
   const fr = await api.rpc('session.fork', { session_id: 'p3' })
   assert.match(fr.session_id, /^fork-/)

@@ -362,3 +362,27 @@ async def test_sys_operation_cannot_shadow_host_tools(ckpt_dir, writer, fake, tm
         assert any('HOST_DENIED_MARKER' in m for m in tool_msgs(fake.SEEN[1]))
     finally:
         await h.stop()
+
+
+@pytest.mark.asyncio
+async def test_keyword_memory_search_reads_sibling_files(ckpt_dir, writer, fake, monkeypatch):
+    """Keyword mode must find .md files written outside this process's FTS connection."""
+    monkeypatch.delenv("MEMORY_ENABLED", raising=False)
+    mdir = ckpt_dir / "memory" / "global" / "memory"
+    mdir.mkdir(parents=True)
+    (mdir / "MEMORY.md").write_text("CLEAR_ME_TOKEN=PURPLE_55\n", encoding="utf-8")
+    fake.reset_script([
+        AssistantMessage(content="", tool_calls=[tc("memory_search", {"query": "CLEAR_ME_TOKEN"})]),
+        AssistantMessage(content="found"),
+    ])
+    h = RpcHarness(ckpt_dir, writer)
+    await h.start()
+    try:
+        await turn(h, "ms1", {"memory": {"enabled": True, "scope": "global"}})
+        msgs = tool_msgs(fake.SEEN[1]) if len(fake.SEEN) > 1 else tool_msgs(fake.SEEN[0])
+        joined = "\n".join(msgs)
+        assert "PURPLE_55" in joined, joined
+        st = await h.call("capabilities.status", {"sid": "ms1"})
+        assert st["result"]["info"]["memory"].get("search") == "keyword-file"
+    finally:
+        await h.stop()
