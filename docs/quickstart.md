@@ -1,80 +1,44 @@
 # Quickstart (Mac / Linux)
 
-## 1. Install
-
-Use Node ≥22, Python 3.13 and dsh `>=0.2.1-rc.2 <0.3.0`. `uv` is recommended;
-otherwise `scripts/setup-sidecar` uses Python's venv/pip. No Gateway is required.
+You need Node ≥22, Python 3.13, and dsh `>=0.2.1-rc.2 <0.3.0`. No Gateway required.
 
 ```bash
 npm install -g @deepseek-ai/dsh@next
 git clone https://github.com/ThinkFlowLab/dsh-jiuwen-adapter.git
 cd dsh-jiuwen-adapter
 npm run sidecar:setup
-# Installs pinned openjiuwen 0.1.20.post1 into .venv-sidecar.
 dsh plugin --profile web add "$PWD"
-dsh plugin --profile headless add "$PWD"
-```
 
-Keep this checkout and its virtualenv together. For an installed package, run
-`scripts/setup-sidecar` from that package directory; alternatively configure
-`agentcorePython` / `AGENTCORE_PYTHON` with an existing compatible environment.
-
-## 2. Configure a model
-
-Set `API_KEY` securely in the launching environment. Do not put secrets in YAML,
-source control, shell command arguments, or diagnostic output.
-
-```bash
 export AGENTCORE_API_BASE=https://api.example.com/v1
 export AGENTCORE_MODEL=your-model
-# Optional dialect, e.g. deepseek / openai_compatible:
-export AGENTCORE_ENDPOINT_PROFILE=openai_compatible
-```
+# Set API_KEY in the environment; never put it in YAML or the repo.
 
-An existing `~/.jiuwenswarm/config/.env` is also supported (`API_BASE`, `API_KEY`,
-`MODEL_NAME`, `MODEL_PROVIDER`, `ENDPOINT_PROFILE`); installing JiuwenSwarm is not
-necessary. See [configuration](./configuration.md) for precedence.
-
-Append to each profile's **existing** `~/.dsh/profiles/<profile>/cordis.patch.yml`:
-
-```yaml
-- id: llm-jiuwen
-  config:
-    backend: agent-core
-    gatewayFallback: false
-- id: agent-default-model
-  config: { provider: jiuwen, model: jiuwen-default }
-```
-
-## 3. Chat
-
-```bash
-dsh --profile headless --json "Say hello and end with QUICKSTART_OK"
+# Append — do not replace other plugins in this file
+printf -- '- id: agent-default-model\n  config:\n    provider: jiuwen\n    model: jiuwen-default\n' >> ~/.dsh/profiles/web/cordis.patch.yml
 dsh --profile web
 ```
 
-In the web UI use `/jiuwen status`, `/jiuwen capabilities`, `/jiuwen help`.
-Headless tasks are plain prompts; slash-command text there is not dispatched.
+`npm run sidecar:setup` installs pinned openjiuwen into `.venv-sidecar`. Keep this checkout and that virtualenv together, or point `AGENTCORE_PYTHON` at another compatible environment.
 
-Optional skills, planning, memory, subagents and rails are **off by default**.
-Enable only what you need: [native capabilities](./agentcore-capabilities.md).
+An existing `~/.jiuwenswarm/config/.env` also works (`API_BASE`, `API_KEY`, `MODEL_NAME`). See [configuration](./configuration.md) for precedence.
 
-## 4. Verify
+Headless: `dsh plugin --profile headless add "$PWD"`, then `dsh --profile headless --json "Say hello and end with QUICKSTART_OK"`. That text is a prompt, not a slash-command runner. In the web UI, try `/jiuwen status` and `/jiuwen help`.
+
+Optional skills, planning, memory and rails are off by default. Enable only what you need: [native capabilities](./agentcore-capabilities.md).
+
+## Tests
 
 ```bash
 npm test
 npm run test:sidecar
 npm run test:e2e:offline
-DSH_BIN=/path/to/dsh npm run test:e2e:live
 ```
 
-The live suite needs model credentials, Linux `ss`, Python, and Gateway :19000 down.
-It uses isolated dsh profiles and restores a checksum-verified Jiuwen snapshot.
-See [E2E instructions](./e2e.md) before testing on a shared box.
+Live tests need model credentials and a few box-safety steps: [E2E](./e2e.md).
 
-## Optional legacy Gateway backend
+## Optional Gateway path
 
-Install and start your JiuwenSwarm Gateway/AgentServer separately, then set:
+Start JiuwenSwarm separately, then set:
 
 ```yaml
 - id: llm-jiuwen
@@ -83,6 +47,4 @@ Install and start your JiuwenSwarm Gateway/AgentServer separately, then set:
     gatewayURL: ws://127.0.0.1:19000/ws
 ```
 
-Gateway is needed for team/workflow execution and marketplace operations, not normal
-agent-core chat. Existing Gateway history stays there; switching to agent-core does
-not import it. [Migration and capability boundaries](./agent-core.md).
+This path is for team/workflow execution, marketplace operations, or existing Gateway history. Switching to agent-core does not import that history. [Migration](./agent-core.md).
