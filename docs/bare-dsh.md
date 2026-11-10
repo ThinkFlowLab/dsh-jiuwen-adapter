@@ -12,12 +12,14 @@ BARE=$HOME/bare-dsh npm run bare-dsh      # = scripts/bare-dsh.sh
 export DSH_HOME=$HOME/bare-dsh/home PATH=$HOME/bare-dsh/prefix/bin:$PATH
 ```
 
-What the script does: `npm i -g --prefix $BARE/prefix @deepseek-ai/dsh`; for both `headless` and `web` profiles runs `dsh plugin --profile <p> add <adapter>` (loads the package `cordis.patch.yml` as a bundle layer); writes into each profile’s `cordis.patch.yml`:
+What the script does: `npm i -g --prefix $BARE/prefix @deepseek-ai/dsh`; for both `headless` and `web` profiles runs `dsh plugin --profile <p> add <adapter>` (loads the package `cordis.patch.yml` as a bundle layer). For headless (no Models page) it also pins the default model in the profile patch:
 
 ```yaml
 - id: agent-default-model
   config: { provider: jiuwen, model: jiuwen-default }
 ```
+
+In the web UI you can skip that yaml and pick (or default) the Jiuwen model under **Settings → Models** and the composer instead.
 
 Mac: `brew install dsh` also works (needs ≥ 0.2), then `dsh plugin --profile web add …` as above.
 

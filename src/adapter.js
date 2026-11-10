@@ -132,6 +132,7 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
             ...(process.env.AGENTCORE_FAKE_MODEL ? { AGENTCORE_FAKE_MODEL: process.env.AGENTCORE_FAKE_MODEL } : {}),
             ...(cfg.apiKeyEnv ? {} : {}),
           },
+          ...(typeof deps.resolveChildEnv === 'function' ? { resolveChildEnv: deps.resolveChildEnv } : {}),
           ...(deps.agentcoreSpawnImpl ? { spawnImpl: deps.agentcoreSpawnImpl } : {}),
         })
         this._agentcoreKey = key
@@ -139,8 +140,9 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
           try { prev.shutdown?.() } catch { /* ignore */ }
         }
       }
-      // Refresh executeTool each call in case host wired late.
+      // Refresh executeTool / credential resolver each call in case host wired late.
       if (deps.executeTool) this._agentcore.executeTool = deps.executeTool
+      if (deps.resolveChildEnv) this._agentcore.resolveChildEnv = deps.resolveChildEnv
       return this._agentcore
     }
 

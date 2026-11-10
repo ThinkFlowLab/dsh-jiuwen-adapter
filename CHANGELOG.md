@@ -3,6 +3,12 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [SemVer](https://semver.org/).
 
+## Unreleased — model settings in the dsh UI
+
+- The Jiuwen provider is configured in **Settings → Models** (API key, endpoint, model list). Pick the model in the composer, or set it as the default. You no longer need to edit `cordis.patch.yml` or export `AGENTCORE_MODEL` / `AGENTCORE_API_BASE` just to choose a model.
+- A concrete UI selection, and a catalog `modelName` on an alias, win over env / `~/.jiuwenswarm/config/.env`. Env and dotenv remain fallbacks for headless use and for unresolved aliases. The API key is stored write-only in dsh credentials when set in the UI.
+- The adapter registers as a dsh configurable provider and ships a small web client card (`lib/client.js`) because the built-in Models editor only has layouts for DeepSeek and pi-ai.
+
 ## Unreleased — generic per-session context dedupe
 
 - **Host skills as an index** (`hostSkillInject: index`, default): name + description once per Jiuwen session, bodies on demand via the passthrough `skill` tool (always allowlisted / force-included under index mode); hash persisted across restarts; generic secret redaction for any forwarded skill text. If the loader is still missing, stays **index-only** and logs — never silently dumps full bodies. `body` is the explicit inline-bodies mode.

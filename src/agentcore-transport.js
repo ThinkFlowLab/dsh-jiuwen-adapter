@@ -12,7 +12,7 @@ import { agentcoreChildEnv } from './jiuwen-env.js'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import { redactSecrets } from './redact.js'
 import { emitTextDelta, finishText } from './stream-emit.js'
 
@@ -47,6 +47,9 @@ export class AgentCoreTransport {
     this.spawnImpl = opts.spawnImpl || spawn
     /** Optional ready probe override */
     this.readyTimeoutMs = Number(opts.readyTimeoutMs || 30_000)
+    /** Optional async () => env extras (credentials resolved from the dsh UI). */
+    this.resolveChildEnv = opts.resolveChildEnv
+    this._childEnvFp = ''
 
     this._proc = null
     this._rl = null
@@ -69,9 +72,35 @@ export class AgentCoreTransport {
     return this.pythonPath
   }
 
+  async _resolvedExtraEnv() {
+    if (typeof this.resolveChildEnv !== 'function') return {}
+    try { return (await this.resolveChildEnv()) || {} } catch { return {} }
+  }
+
+  _fingerprintEnv(extra) {
+    const parts = ['JIUWEN_API_KEY', 'API_KEY'].map((k) => {
+      const v = extra?.[k]
+      return v ? createHash('sha256').update(String(v)).digest('hex').slice(0, 16) : ''
+    })
+    return parts.join(':')
+  }
+
+  _recycleChild() {
+    const proc = this._proc
+    this._proc = null
+    try { this._rl?.close?.() } catch { /* ignore */ }
+    this._rl = null
+    try { proc?.kill?.('SIGTERM') } catch { /* ignore */ }
+  }
+
   async ensureStarted() {
     if (this._closed) throw new Error('AgentCoreTransport is shut down')
-    if (this._proc && !this._proc.killed) return
+    if (this._proc && !this._proc.killed) {
+      const extra = await this._resolvedExtraEnv()
+      const fp = this._fingerprintEnv(extra)
+      if (fp && this._childEnvFp && fp !== this._childEnvFp) this._recycleChild()
+      else return
+    }
     if (this._starting) return this._starting
     this._starting = this._spawn()
     try {
@@ -83,9 +112,11 @@ export class AgentCoreTransport {
 
   async _spawn() {
     const py = this.resolvePython()
+    const extra = await this._resolvedExtraEnv()
+    this._childEnvFp = this._fingerprintEnv(extra)
     const env = {
       ...process.env,
-      ...agentcoreChildEnv(),
+      ...agentcoreChildEnv(extra),
       ...this.env,
       AGENTCORE_LOG_LEVEL: this.env.AGENTCORE_LOG_LEVEL || process.env.AGENTCORE_LOG_LEVEL || 'WARNING',
       PYTHONUNBUFFERED: '1',

@@ -31,6 +31,7 @@ export const name = 'llm-jiuwen'
 import { JIUWEN_EVENT, JIUWEN_TYPED_EVENTS } from './typed-events.js'
 import { typedEventFor, installSessionSync, createPlanBridge, createModelDiscovery } from './bridges.js'
 import { installHostSync } from './host-sync.js'
+import { installHostModelSettings } from './host-model-settings.js'
 export { JIUWEN_EVENT, JIUWEN_TYPED_EVENTS }
 // Only `llm` is required. agents/tools/approval are resolved lazily per call via service() (ctx.get),
 // so hosts without them (plain Cordis + dsh-llm) still load the provider; Cordis has no optional
@@ -64,6 +65,7 @@ export function apply(ctx, config = {}) {
   const routingOn = (c = readConfig()) => Boolean(c.mapJiuwenFsToDsh && c.toolPassthrough === 'mcp')
 
   const logger = ctx.logger ?? console
+  const modelSettings = installHostModelSettings({ ctx, readConfig, logger })
   // Warn (never throw) about unknown/misspelled/deprecated keys so a typo cannot silently disable a feature.
   for (const w of validateConfig(config)) { try { logger.warn?.(`[jiuwen] ${w}`) } catch { /* ignore */ } }
   const LlmAdapter = loadLlmAdapter(logger, resolved)
@@ -203,6 +205,7 @@ export function apply(ctx, config = {}) {
     onEvent,
     // modelDiscovery (opt-in): Jiuwen models as unique `<discoveryPrefix><model_name>` catalog ids.
     discoverModels: () => (readConfig().modelDiscovery ? modelDiscovery.list() : Promise.resolve([])),
+    resolveChildEnv: modelSettings.resolveChildEnv,
     // Optional host attachment store (generic Cordis service name `attachments`).
     attachments: () => {
       try { return (typeof ctx.get === 'function' ? ctx.get('attachments') : undefined) ?? ctx.attachments } catch { return undefined }
@@ -491,6 +494,7 @@ export function apply(ctx, config = {}) {
     disposedAll = true
     for (const d of disposers) { try { d() } catch { /* ignore */ } }
     disposers.length = 0
+    try { modelSettings.dispose() } catch { /* ignore */ }
     try { registration() } catch { /* already disposed */ }
     const pending = [mcpBridge.dispose()]
     // The Python child owns referenced stdio pipes. Leaving it alive prevents

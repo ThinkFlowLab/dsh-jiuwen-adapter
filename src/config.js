@@ -11,6 +11,7 @@
  */
 import { DEFAULT_BUSY_IGNORE_SOURCES } from './busy-interrupt.js'
 import { resolveAgentcoreFeatures } from './agentcore-features.js'
+import { unwrapConfig } from './host-model-settings.js'
 
 const DEFAULT_MODELS = [
   { id: 'jiuwen-default', name: 'Jiuwen Default', contextWindow: 128_000, maxTokens: 8192 },
@@ -53,6 +54,7 @@ const DEFAULT_MODELS = [
 export const DEFAULT_PASSTHROUGH_TOOLS = Object.freeze(['bash', 'read', 'edit', 'write', 'glob', 'grep', 'session_search', 'session_event_search', 'session_event_read', 'session_trace', 'session_event_trace'])
 
 export function resolveConfig(raw = {}, opts = {}) {
+  raw = unwrapConfig(raw)
   const env = opts.env ?? process.env
   // Product default is gateway (Jiuwen brain). openai only if explicitly requested.
   const modeRaw = String(env.JIUWEN_MODE || raw.mode || 'gateway').toLowerCase()
@@ -117,8 +119,8 @@ export function resolveConfig(raw = {}, opts = {}) {
     agentcore: resolveAgentcoreFeatures(raw.agentcore, env),
     brainOwnership: 'jiuwen',
     baseURL: stripTrailingSlash(String(
-      env.JIUWEN_BASE_URL
-      || raw.baseURL
+      raw.baseURL
+      || env.JIUWEN_BASE_URL
       || 'http://127.0.0.1:18080/v1',
     )),
     gatewayURL: String(
