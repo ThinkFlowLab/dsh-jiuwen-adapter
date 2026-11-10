@@ -1,11 +1,11 @@
 {
-  "files": 60,
-  "tests": 385,
-  "pass": 381,
+  "files": 76,
+  "tests": 513,
+  "pass": 508,
   "coverageMargin": 1.5,
   "coverage": {
     "lines": 95,
     "branches": 74,
-    "functions": 81
+    "functions": 83
   }
 }

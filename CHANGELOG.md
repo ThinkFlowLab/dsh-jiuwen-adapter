@@ -3,6 +3,11 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [SemVer](https://semver.org/).
 
+## Unreleased — gateway batch tools.execute and Models card hint
+
+- Gateway MCP passthrough (`toolApproval: host`) now sends the same dual-shape `tools.execute` payload as agent-core, so dsh 0.2.2's batch API works and older hosts still accept a single call. Covered by an isolated contract test; the Jiuwen Gateway is not started.
+- The Settings → Models JiuwenSwarm card hides dsh's generic "Other fields live in cordis.patch.yml" editor and its Edit / disabled Apply controls (dsh only ships layouts for DeepSeek and pi-ai). The adapter's own form is unchanged; other provider rows and the settings schema are not touched.
+
 ## Unreleased — model settings in the dsh UI
 
 - The model picker lists the real model names from **Settings → Models** under JiuwenSwarm (agent-core backend) instead of `jiuwen-default` / `jiuwen-swarm`; selecting one sends exactly that model to agent-core. Legacy alias selections still resolve to the configured (or env) model. The Models card now takes plain model names. `backend: gateway` is unchanged.
