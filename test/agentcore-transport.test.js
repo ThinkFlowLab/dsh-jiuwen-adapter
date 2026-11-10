@@ -576,3 +576,12 @@ test('concurrent sessions isolate chunks, host tool execution and native approva
     assert.deepEqual(asks.sort(),['A','B'])
   } finally { await t.shutdown() }
 })
+
+test('failureCode always yields a non-empty string for dsh LlmError', async () => {
+  const { failureCode } = await import('../src/agentcore-transport.js')
+  assert.equal(failureCode('RATE_LIMIT'), 'RATE_LIMIT')
+  assert.equal(failureCode(181001), 'AGENTCORE_181001')
+  assert.equal(failureCode(-32000), 'AGENTCORE_-32000')
+  assert.equal(failureCode(''), 'AGENTCORE')
+  assert.equal(failureCode(undefined), 'AGENTCORE')
+})

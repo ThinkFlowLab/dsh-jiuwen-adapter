@@ -571,7 +571,7 @@ export class AgentCoreTransport {
       const reason = aborted || signal?.aborted
         ? { kind: 'aborted', failure: { message: 'aborted', code: 'ABORTED' } }
         : turnError
-          ? { kind: 'error', failure: { message: redactSecrets(String(turnError.message || turnError)), code: turnError.code || 'AGENTCORE' } }
+          ? { kind: 'error', failure: { message: redactSecrets(String(turnError.message || turnError)), code: failureCode(turnError.code) } }
           : { kind: 'stop' }
       if (usage && this.emitUsage && reason.kind === 'stop') {
         yield { type: 'usage', usage }
@@ -749,3 +749,14 @@ function lastUserText(options) {
 }
 
 export default AgentCoreTransport
+
+/**
+ * dsh LlmError needs a non-empty string code; sidecar/openjiuwen codes can be
+ * numeric (e.g. 181001), which made dsh replace the real failure message
+ * (quota, auth, ...) with "LlmError code must be a non-empty string".
+ */
+export function failureCode(code) {
+  if (typeof code === 'string' && code.trim()) return code
+  if (typeof code === 'number' && Number.isFinite(code)) return `AGENTCORE_${code}`
+  return 'AGENTCORE'
+}
