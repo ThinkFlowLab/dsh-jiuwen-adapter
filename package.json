@@ -34,7 +34,8 @@
       "types": "./index.d.ts",
       "default": "./index.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./client": "./lib/client.js"
   },
   "files": [
     "index.js",
@@ -53,7 +54,8 @@
     "sidecar/",
     "scripts/setup-sidecar",
     "pytest-sidecar.ini",
-    "docs/agent-core.md"
+    "docs/agent-core.md",
+    "lib/client.js"
   ],
   "scripts": {
     "test": "node --test test/*.test.js",
@@ -81,17 +83,22 @@
     "guard:live:both": "GUARD_BACKEND=both bash scripts/guard-live.sh",
     "test:e2e": "node test/e2e/run.mjs",
     "test:e2e:offline": "node --test --test-concurrency=1 test/agentcore-sidecar-integration.test.js test/agentcore-capabilities.test.js test/plugin-compat-matrix.test.js",
-    "test:e2e:live": "JIUWEN_E2E_LIVE=1 node test/e2e/run.mjs"
+    "test:e2e:live": "JIUWEN_E2E_LIVE=1 node test/e2e/run.mjs",
+    "build:client": "node scripts/build-client.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.5",
-    "@deepseek-ai/dsh-llm": ">=0.2.1-rc.2 <0.3.0"
+    "@deepseek-ai/dsh-llm": ">=0.2.1-rc.2 <0.3.0",
+    "@deepseek-ai/schemastery": "*"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
       "optional": true
     },
     "@deepseek-ai/dsh-llm": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
       "optional": true
     }
   },
@@ -103,6 +110,13 @@
     "manifestVersion": 1,
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-api-remotes"
+      ]
     }
   },
   "publishConfig": {

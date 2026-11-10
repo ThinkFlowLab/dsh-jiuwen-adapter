@@ -52,7 +52,7 @@ function first(...vals) {
 /** Env vars to inject into the agent-core sidecar (never logged). */
 export function agentcoreChildEnv(extra = {}) {
   const jw = loadJiuwenDotEnv()
-  const env = { ...extra }
+  const env = {}
   const apiKey = first(process.env.JIUWEN_API_KEY, process.env.API_KEY, jw.API_KEY, jw.JIUWEN_API_KEY)
   const apiBase = first(process.env.AGENTCORE_API_BASE, process.env.API_BASE, jw.API_BASE)
   const model = first(process.env.AGENTCORE_MODEL, process.env.MODEL_NAME, jw.MODEL_NAME)
@@ -68,7 +68,8 @@ export function agentcoreChildEnv(extra = {}) {
   if (model) env.MODEL_NAME = model
   if (provider) env.MODEL_PROVIDER = provider
   env.JIUWEN_HOME = jiuwenHome()
-  return env
+  // Host-resolved extras (dsh credentials from Settings → Models) win over env / dotenv.
+  return { ...env, ...extra }
 }
 
 /**
@@ -79,19 +80,30 @@ export function resolveAgentCoreModel(cfg = {}, options = {}, overrides = {}) {
   const jw = loadJiuwenDotEnv()
   const placeholder = /127\.0\.0\.1:18080|127\.0\.0\.1:9\b/
   const cfgBase = cfg.baseURL && !placeholder.test(String(cfg.baseURL)) ? cfg.baseURL : undefined
+  // A baseURL the user saved in dsh Settings → Models (plugin config) wins
+  // over env / Jiuwen dotenv. Env remains the fallback when the UI field is empty
+  // or still the openai-compat placeholder.
   const apiBase = first(
+    cfgBase,
     process.env.AGENTCORE_API_BASE,
     process.env.API_BASE,
     jw.API_BASE,
-    cfgBase,
   ) || 'http://127.0.0.1:9/v1'
-  // dsh / cordis often pass the alias "jiuwen-default"; map to the real model in jiuwen .env.
-  const alias = new Set(['jiuwen-default', 'jiuwen-swarm', 'jiuwen', 'default'])
-  const rawName = first(overrides.modelName, options.model, cfg.defaultModel)
-  // Env wins over jiuwen .env so live/tests can override (e.g. AGENTCORE_MODEL).
-  const modelName = (rawName && alias.has(String(rawName).toLowerCase())
-    ? first(process.env.AGENTCORE_MODEL, process.env.MODEL_NAME, jw.MODEL_NAME, rawName)
-    : first(overrides.modelName, process.env.AGENTCORE_MODEL, process.env.MODEL_NAME, rawName, jw.MODEL_NAME)) || 'jiuwen-default'
+  // dsh / cordis often pass catalog aliases like "jiuwen-default".
+  const aliasIds = new Set(['jiuwen-default', 'jiuwen-swarm', 'jiuwen', 'default'])
+  const isAlias = (name) => name && aliasIds.has(String(name).toLowerCase())
+  const catalog = (cfg.models || []).find(m => m && (m.id === overrides.modelName || m.id === options.model || m.id === cfg.defaultModel))
+  const catalogName = catalog?.modelName
+  const requested = first(overrides.modelName, options.model, cfg.defaultModel)
+  // A concrete UI / request / catalog selection wins over AGENTCORE_MODEL and
+  // Jiuwen dotenv. Aliases without a catalog modelName still fall back to env.
+  let modelName
+  if (!isAlias(requested)) {
+    modelName = first(overrides.modelName, options.model, catalogName, cfg.defaultModel, process.env.AGENTCORE_MODEL, process.env.MODEL_NAME, jw.MODEL_NAME)
+  } else {
+    modelName = first(catalogName, process.env.AGENTCORE_MODEL, process.env.MODEL_NAME, jw.MODEL_NAME, requested)
+  }
+  modelName = modelName || 'jiuwen-default'
   const provider = process.env.AGENTCORE_FAKE_MODEL === '1'
     ? 'fake'
     : first(overrides.modelProvider, jw.MODEL_PROVIDER, 'OpenAI')

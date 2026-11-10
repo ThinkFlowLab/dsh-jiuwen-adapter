@@ -38,31 +38,22 @@ Set `backend: gateway` to use this path. Details: [Quickstart](./docs/quickstart
 
 ## Quickstart
 
-Requires Node ≥22, Python 3.13 (recommended) and dsh `>=0.2.1-rc.2 <0.3.0`.
+Node ≥22, Python 3.13, and dsh `>=0.2.1-rc.2 <0.3.0`. No Gateway required.
 
 ```bash
 git clone https://github.com/ThinkFlowLab/dsh-jiuwen-adapter.git
 cd dsh-jiuwen-adapter
 npm run sidecar:setup                  # pinned openjiuwen 0.1.20.post1
 dsh plugin --profile web add "$PWD"
-# Configure API_KEY securely in your environment; never put it in the patch.
-export AGENTCORE_API_BASE=https://api.example.com/v1
-export AGENTCORE_MODEL=your-model
+dsh --profile web
 ```
 
-Append this to the profile's existing `cordis.patch.yml` (do not replace other plugins):
+In the dsh UI open **Settings → Models**, select **JiuwenSwarm**, and fill in the
+API key, endpoint, and model list. Then pick a Jiuwen model in the composer
+(or set it as the default). You do not need to edit `cordis.patch.yml` or export
+`AGENTCORE_MODEL` / `AGENTCORE_API_BASE` to choose a model.
 
-```yaml
-- id: llm-jiuwen
-  config:
-    backend: agent-core
-    gatewayFallback: false
-- id: agent-default-model
-  config: { provider: jiuwen, model: jiuwen-default }
-```
-
-Run `dsh --profile web`. Existing `~/.jiuwenswarm/config/.env` model settings are
-also recognized. Headless setup, and the Gateway path (`backend: gateway`), are in
+Headless setup, env fallbacks, and the Gateway path (`backend: gateway`) are in
 [Quickstart](./docs/quickstart.md).
 
 ## What runs where

@@ -138,17 +138,29 @@ Auth resolution order (matches Jiuwen web_proxy): query `access_token`/`token` �
         requestTimeoutMs: 180000
         models:
           - { id: jiuwen-default, name: Jiuwen Default, contextWindow: 128000, maxTokens: 8192 }
-- id: agent-default-model
-  config: { provider: jiuwen, model: jiuwen-default }
 ```
+
+In the web UI, set the endpoint, API key and model list under **Settings → Models**
+for JiuwenSwarm, then pick the model in the composer (or set it as the default).
+That is the primary path; you do not need to hand-edit `agent-default-model` or
+export `AGENTCORE_MODEL` / `AGENTCORE_API_BASE` just to choose a model.
 
 ## Agent-core model and storage settings
 
-The sidecar resolves the model endpoint from `AGENTCORE_API_BASE` → `API_BASE` →
-Jiuwen dotenv `API_BASE` → plugin `baseURL` (diagnostic placeholder ignored).
-Credentials resolve from `JIUWEN_API_KEY` → `API_KEY` → Jiuwen dotenv; `apiKeyEnv`
-can name a different variable. Model aliases such as `jiuwen-default` resolve from
-`AGENTCORE_MODEL` → `MODEL_NAME` → dotenv `MODEL_NAME`.
+The sidecar resolves the **endpoint** in this order: the `baseURL` saved in
+**Settings → Models** (plugin config, skipping the diagnostic placeholder) →
+`AGENTCORE_API_BASE` → `API_BASE` → Jiuwen dotenv `API_BASE`.
+
+The **model name** is the model the user selected in the dsh composer (or the
+catalog `modelName` when the picker still shows an alias such as `jiuwen-default`).
+Only when that selection is a bare alias with no catalog `modelName` does the
+sidecar fall back to `AGENTCORE_MODEL` → `MODEL_NAME` → dotenv `MODEL_NAME`.
+
+**Credentials** resolve from the dsh credentials store (the Models page writes
+the key write-only under `apiKeyEnv`, default `JIUWEN_API_KEY`) → `JIUWEN_API_KEY`
+/ `$apiKeyEnv` / `API_KEY` in the environment → Jiuwen dotenv. Never put a key
+in YAML.
+
 `AGENTCORE_ENDPOINT_PROFILE` overrides the endpoint dialect. Reasoning generation
 is disabled unless `AGENTCORE_REASONING=enabled` is set; `forwardReasoning` controls
 rendering separately.
