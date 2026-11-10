@@ -7,6 +7,7 @@ import { resolveHostProfile } from './host-profiles.js'
 import { sessionUsesProvider, scopedService } from './bridges.js'
 import { JIUWEN_SIDE_EFFECT_TOOLS } from './fs-route.js'
 import { matchesAllowlist } from './mcp-bridge.js'
+import { findCatalogModel, isModelAlias } from './picker-models.js'
 
 const PLAN_CHAT = 'agent.plan'
 /** Jiuwen tools a permission preset touches (never permissions.tools.set). */
@@ -426,8 +427,8 @@ export function installHostSync(deps) {
         const prefix = j.cfg.discoveryPrefix || 'jiuwen-model:'
         const bare = modelName.startsWith(prefix) ? modelName.slice(prefix.length) : modelName
         // Catalog ids like jiuwen-default are not Jiuwen model_name — only forward non-catalog or explicit modelName.
-        const catalog = (j.cfg.models || []).find(m => m.id === modelName)
-        const forward = catalog?.modelName || (!catalog && bare && bare !== 'jiuwen-default' && bare !== 'jiuwen-swarm' ? bare : undefined)
+        const catalog = findCatalogModel(j.cfg, modelName)
+        const forward = catalog?.modelName || (!catalog && bare && !isModelAlias(bare) ? bare : undefined)
         if (forward) {
           if (forward !== j.mapping.modelName) {
             try { sessions.update(j.id, { modelName: String(forward), modelNameSynced: true }) } catch (e) { soft(logger, 'model', e) }

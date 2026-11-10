@@ -5,6 +5,7 @@
 import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { findCatalogModel, isModelAlias, resolveAliasModel } from './picker-models.js'
 
 /** Passwd home for the current user — ignores ephemeral HOME= overrides. */
 export function realHomedir() {
@@ -89,19 +90,19 @@ export function resolveAgentCoreModel(cfg = {}, options = {}, overrides = {}) {
     process.env.API_BASE,
     jw.API_BASE,
   ) || 'http://127.0.0.1:9/v1'
-  // dsh / cordis often pass catalog aliases like "jiuwen-default".
-  const aliasIds = new Set(['jiuwen-default', 'jiuwen-swarm', 'jiuwen', 'default'])
-  const isAlias = (name) => name && aliasIds.has(String(name).toLowerCase())
-  const catalog = (cfg.models || []).find(m => m && (m.id === overrides.modelName || m.id === options.model || m.id === cfg.defaultModel))
-  const catalogName = catalog?.modelName
-  const requested = first(overrides.modelName, options.model, cfg.defaultModel)
-  // A concrete UI / request / catalog selection wins over AGENTCORE_MODEL and
-  // Jiuwen dotenv. Aliases without a catalog modelName still fall back to env.
+  // Legacy catalog aliases ("jiuwen-default", …) map to a concrete model:
+  // the alias entry's modelName → the configured default → the first
+  // configured model → AGENTCORE_MODEL / MODEL_NAME / Jiuwen dotenv.
+  const pickedOverride = overrides.modelName && !isModelAlias(overrides.modelName) ? overrides.modelName : undefined
+  const requested = first(pickedOverride, options.model, cfg.defaultModel)
   let modelName
-  if (!isAlias(requested)) {
-    modelName = first(overrides.modelName, options.model, catalogName, cfg.defaultModel, process.env.AGENTCORE_MODEL, process.env.MODEL_NAME, jw.MODEL_NAME)
+  if (requested && !isModelAlias(requested)) {
+    // A concrete UI / request selection wins over env. A picker id that is a
+    // catalog entry's real name, or an alias-id entry with modelName, maps to it.
+    const catalog = findCatalogModel(cfg, requested)
+    modelName = first(pickedOverride, catalog?.modelName, requested)
   } else {
-    modelName = first(catalogName, process.env.AGENTCORE_MODEL, process.env.MODEL_NAME, jw.MODEL_NAME, requested)
+    modelName = first(resolveAliasModel(cfg, requested, { dotenv: jw }), requested)
   }
   modelName = modelName || 'jiuwen-default'
   const provider = process.env.AGENTCORE_FAKE_MODEL === '1'

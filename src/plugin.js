@@ -206,6 +206,8 @@ export function apply(ctx, config = {}) {
     // modelDiscovery (opt-in): Jiuwen models as unique `<discoveryPrefix><model_name>` catalog ids.
     discoverModels: () => (readConfig().modelDiscovery ? modelDiscovery.list() : Promise.resolve([])),
     resolveChildEnv: modelSettings.resolveChildEnv,
+    // Host default selection (dsh-agent-default-model), so a legacy alias default stays routable in the picker.
+    hostDefaultModel: () => service('agentDefaultModel')?.currentSelection?.(),
     // Optional host attachment store (generic Cordis service name `attachments`).
     attachments: () => {
       try { return (typeof ctx.get === 'function' ? ctx.get('attachments') : undefined) ?? ctx.attachments } catch { return undefined }

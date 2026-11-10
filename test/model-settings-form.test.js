@@ -4,18 +4,37 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import {
-  modelsFromValue, validateModels, pathOpsForDraft, namespaceValue, DEFAULT_MODELS, SETTINGS_NS,
+  modelsFromValue, defaultFromValue, modelsForSave, validateModels, pathOpsForDraft, namespaceValue, SETTINGS_NS,
 } from '../client/form-logic.js'
 
-test('modelsFromValue falls back to the default catalog', () => {
-  const models = modelsFromValue({})
-  assert.deepEqual(models.map(m => m.id), DEFAULT_MODELS.map(m => m.id))
+test('modelsFromValue starts empty when nothing is configured (no jiuwen aliases)', () => {
+  assert.deepEqual(modelsFromValue({}), [])
 })
 
-test('validateModels rejects a blank or duplicate id', () => {
-  assert.equal(validateModels([{ id: 'a' }, { id: 'b' }]), undefined)
-  assert.equal(validateModels([{ id: '' }]).index, 0)
+test('modelsFromValue rewrites legacy alias rows to their real model name', () => {
+  const value = {
+    defaultModel: 'jiuwen-default',
+    models: [
+      { id: 'jiuwen-default', name: 'Jiuwen Default', modelName: 'doubao-seed-2.0-mini' },
+      { id: 'jiuwen-swarm', name: 'Jiuwen Swarm' },
+      { id: 'deepseek-v3', name: 'DeepSeek V3' },
+    ],
+  }
+  const rows = modelsFromValue(value)
+  assert.deepEqual(rows.map(r => [r.id, r.name]), [['doubao-seed-2.0-mini', ''], ['deepseek-v3', 'DeepSeek V3']])
+  assert.equal(defaultFromValue(value, rows), 'doubao-seed-2.0-mini')
+  assert.equal(defaultFromValue({ defaultModel: 'gone' }, rows), 'doubao-seed-2.0-mini')
+})
+
+test('modelsForSave drops blank rows and fills the display name', () => {
+  assert.deepEqual(modelsForSave([{ id: ' m ', name: '' }, { id: '', name: 'x' }]), [{ id: 'm', name: 'm' }])
+})
+
+test('validateModels rejects aliases, duplicates, and an empty list', () => {
+  assert.equal(validateModels([{ id: 'a' }, { id: 'b' }, { id: '' }]), undefined)
+  assert.ok(/at least one/.test(validateModels([{ id: '' }]).message))
   assert.ok(/twice/.test(validateModels([{ id: 'a' }, { id: 'a' }]).message))
+  assert.ok(/not a model name/.test(validateModels([{ id: 'jiuwen-default' }]).message))
 })
 
 test('pathOpsForDraft emits set/unset for changed fields only', () => {
