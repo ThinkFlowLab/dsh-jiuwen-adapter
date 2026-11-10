@@ -26,7 +26,7 @@ function host(config = {}) {
     logger: { info() {}, warn() {}, error() {} },
     provide(n, v) { this[n] = v }, on() {},
   }
-  plugin.apply(ctx, { gatewayURL: URL_, mappingPath: join(dir, `m-${Math.random()}.json`), finalGraceMs: 300, ...config })
+  plugin.apply(ctx, { backend: 'gateway', gatewayURL: URL_, mappingPath: join(dir, `m-${Math.random()}.json`), finalGraceMs: 300, ...config })
   const a = adapters.get('jiuwen')
   return {
     api: ctx.jiuwenAdapter,
@@ -179,7 +179,7 @@ test('host attachments service: content-addressed image is hydrated to base64Dat
     logger: { info() {}, warn() {}, error() {} }, provide() {}, on() {},
     get: (n) => (n === 'attachments' ? store : undefined),
   }
-  plugin.apply(ctx, { gatewayURL: URL_, mappingPath: join(dir, 'att.json'), finalGraceMs: 300 })
+  plugin.apply(ctx, { backend: 'gateway', gatewayURL: URL_, mappingPath: join(dir, 'att.json'), finalGraceMs: 300 })
   const cs = []
   for await (const c of adapters.get('jiuwen').stream({ provider: 'jiuwen', model: 'jiuwen-default', sessionId: 'att', messages: [{ role: 'user', content: [
     { type: 'text', text: 'echo-params img' },
@@ -253,7 +253,7 @@ function hostWith(services, config = {}) {
     logger: { info() {}, warn() {}, error() {} }, provide(n, v) { this[n] = v }, on() {},
     get: (n) => services[n],
   }
-  plugin.apply(ctx, { gatewayURL: URL_, mappingPath: join(dir, `w-${Math.random()}.json`), finalGraceMs: 300, ...config })
+  plugin.apply(ctx, { backend: 'gateway', gatewayURL: URL_, mappingPath: join(dir, `w-${Math.random()}.json`), finalGraceMs: 300, ...config })
   const a = adapters.get('jiuwen')
   return async (o) => { const cs = []; for await (const c of a.stream({ provider: 'jiuwen', model: 'jiuwen-default', ...o })) cs.push(c); return cs }
 }
@@ -318,7 +318,7 @@ test('/jiuwen command: status / models / model switch → model_name / bad sub',
     logger: { info() {}, warn() {}, error() {}, debug() {} }, provide(n, v) { this[n] = v }, on() {},
     inject(deps, cb) { assert.deepEqual(deps, ['commands']); cb({ commands: { register(d) { registered.push(d); return () => {} } }, on() {} }) },
   }
-  plugin.apply(ctx, { gatewayURL: URL_, mappingPath: join(dir, 'cmd.json'), finalGraceMs: 300 })
+  plugin.apply(ctx, { backend: 'gateway', gatewayURL: URL_, mappingPath: join(dir, 'cmd.json'), finalGraceMs: 300 })
   const def = registered.find(d => d.name === 'jiuwen')
   assert.ok(def)
   const run = (raw) => def.handler({ agent: { id: 'cmd-s' }, rawInput: raw })
@@ -339,7 +339,7 @@ test('/jiuwen mode persists and next chat.send includes that mode', async () => 
     inject(deps, cb) { cb({ commands: { register(d) { registered.push(d); return () => {} } }, on() {} }) },
   }
   const mappingPath = join(dir, `mode-${Math.random()}.json`)
-  plugin.apply(ctx, { gatewayURL: URL_, mappingPath, finalGraceMs: 300 })
+  plugin.apply(ctx, { backend: 'gateway', gatewayURL: URL_, mappingPath, finalGraceMs: 300 })
   const def = registered.find(d => d.name === 'jiuwen')
   const sid = 'mode-s'
   const set = await def.handler({ agent: { id: sid }, rawInput: 'mode agent.plan' })
@@ -362,7 +362,7 @@ test('/jiuwen pause resume rename pin goal workflows history unmap delete', asyn
     inject(deps, cb) { cb({ commands: { register(d) { registered.push(d); return () => {} } }, on() {} }) },
   }
   const mappingPath = join(dir, `cmds-${Math.random()}.json`)
-  plugin.apply(ctx, { gatewayURL: URL_, mappingPath, finalGraceMs: 300 })
+  plugin.apply(ctx, { backend: 'gateway', gatewayURL: URL_, mappingPath, finalGraceMs: 300 })
   const def = registered.find(d => d.name === 'jiuwen')
   const api = ctx.jiuwenAdapter
   const run = (id, raw) => def.handler({ agent: { id }, rawInput: raw })
@@ -425,7 +425,7 @@ test('/jiuwen btw recap skill-toggle plan-status supplement teams skills install
     inject(deps, cb) { cb({ commands: { register(d) { registered.push(d); return () => {} } }, on() {} }) },
   }
   const mappingPath = join(dir, `cmds2-${Math.random()}.json`)
-  plugin.apply(ctx, { gatewayURL: URL_, mappingPath, finalGraceMs: 300 })
+  plugin.apply(ctx, { backend: 'gateway', gatewayURL: URL_, mappingPath, finalGraceMs: 300 })
   const def = registered.find(d => d.name === 'jiuwen')
   const api = ctx.jiuwenAdapter
   const run = (id, raw) => def.handler({ agent: { id }, rawInput: raw })
@@ -477,7 +477,7 @@ test('/jiuwen tools hooks permissions plugins projects archived assets version h
     logger: { info() {}, warn() {}, error() {}, debug() {} }, provide(n, v) { this[n] = v }, on() {},
     inject(deps, cb) { cb({ commands: { register(d) { registered.push(d); return () => {} } }, on() {} }) },
   }
-  plugin.apply(ctx, { gatewayURL: URL_, mappingPath: join(dir, `cmds3-${Math.random()}.json`), finalGraceMs: 300 })
+  plugin.apply(ctx, { backend: 'gateway', gatewayURL: URL_, mappingPath: join(dir, `cmds3-${Math.random()}.json`), finalGraceMs: 300 })
   const def = registered.find(d => d.name === 'jiuwen')
   const run = async (raw) => { const r = await def.handler({ agent: { id: 'n3' }, rawInput: raw }); assert.equal(r.kind, 'success', r.text); return r.text }
   assert.match(await run('tools'), /tools \(2\): Read, Bash/)
@@ -502,7 +502,7 @@ test('/jiuwen archive switch permissions set/unset plugins enable/disable heartb
     logger: { info() {}, warn() {}, error() {}, debug() {} }, provide(n, v) { this[n] = v }, on() {},
     inject(deps, cb) { cb({ commands: { register(d) { registered.push(d); return () => {} } }, on() {} }) },
   }
-  plugin.apply(ctx, { gatewayURL: URL_, mappingPath: join(dir, `cmds4-${Math.random()}.json`), finalGraceMs: 300 })
+  plugin.apply(ctx, { backend: 'gateway', gatewayURL: URL_, mappingPath: join(dir, `cmds4-${Math.random()}.json`), finalGraceMs: 300 })
   const def = registered.find(d => d.name === 'jiuwen')
   const g = ctx.jiuwenAdapter.gateway
   const run = async (raw, id = 'n4') => { const r = await def.handler({ agent: { id }, rawInput: raw }); assert.equal(r.kind, 'success', r.text); return r.text }
@@ -563,7 +563,7 @@ test('/jiuwen updater agent skill-info marketplaces bindings help + validation/e
     logger: { info() {}, warn() {}, error() {}, debug() {} }, provide(n, v) { this[n] = v }, on() {},
     inject(deps, cb) { cb({ commands: { register(d) { registered.push(d); return () => {} } }, on() {} }) },
   }
-  plugin.apply(ctx, { gatewayURL: URL_, mappingPath: join(dir, `cmds5-${Math.random()}.json`), finalGraceMs: 300 })
+  plugin.apply(ctx, { backend: 'gateway', gatewayURL: URL_, mappingPath: join(dir, `cmds5-${Math.random()}.json`), finalGraceMs: 300 })
   const def = registered.find(d => d.name === 'jiuwen')
   const call = (raw) => def.handler({ agent: { id: 'n5' }, rawInput: raw })
   const run = async (raw) => { const r = await call(raw); assert.equal(r.kind, 'success', r.text); return r.text }
@@ -603,7 +603,7 @@ test('connection refused yields a clear /jiuwen error hint', async () => {
     logger: { info() {}, warn() {}, error() {}, debug() {} }, provide(n, v) { this[n] = v }, on() {},
     inject(deps, cb) { cb({ commands: { register(d) { registered.push(d); return () => {} } }, on() {} }) },
   }
-  plugin.apply(ctx, { gatewayURL: 'ws://127.0.0.1:1/ws', mappingPath: join(dir, `cmds6-${Math.random()}.json`), requestTimeoutMs: 2000 })
+  plugin.apply(ctx, { backend: 'gateway', gatewayURL: 'ws://127.0.0.1:1/ws', mappingPath: join(dir, `cmds6-${Math.random()}.json`), requestTimeoutMs: 2000 })
   const def = registered.find(d => d.name === 'jiuwen')
   const r = await def.handler({ agent: { id: 'n6' }, rawInput: 'version' })
   assert.equal(r.kind, 'error')
@@ -617,7 +617,7 @@ test('JiuwenSwarm 0.2.7 shape: assets degrade, teams via team.bindings.list, mod
     logger: { info() {}, warn() {}, error() {}, debug() {} }, provide(n, v) { this[n] = v }, on() {},
     inject(deps, cb) { cb({ commands: { register(d) { registered.push(d); return () => {} } }, on() {} }) },
   }
-  plugin.apply(ctx, { gatewayURL: URL_, mappingPath: join(dir, `cmds027-${Math.random()}.json`), finalGraceMs: 300 })
+  plugin.apply(ctx, { backend: 'gateway', gatewayURL: URL_, mappingPath: join(dir, `cmds027-${Math.random()}.json`), finalGraceMs: 300 })
   const def = registered.find(d => d.name === 'jiuwen')
   const run = async (raw) => { const r = await def.handler({ agent: { id: 'n027' }, rawInput: raw }); assert.equal(r.kind, 'success', r.text); return r.text }
   const shape = (v) => new GatewayTransport({ gatewayURL: URL_ }).rpc('debug.set_shape', { shape: v })
@@ -649,7 +649,7 @@ test('pending ask_user never blocks chat: a typed message closes the card, ends 
     logger: { info() {}, warn() {}, error() {} }, provide(n, v) { this[n] = v },
     on(name, fn) { handlers[name] = fn }, get: (n) => services[n],
   }
-  plugin.apply(ctx, { gatewayURL: URL_, mappingPath: join(dir, `t-${Math.random()}.json`), finalGraceMs: 300, supportsUserInteraction: true })
+  plugin.apply(ctx, { backend: 'gateway', gatewayURL: URL_, mappingPath: join(dir, `t-${Math.random()}.json`), finalGraceMs: 300, supportsUserInteraction: true })
   const a = adapters.get('jiuwen')
   const run = async (o) => { const cs = []; for await (const c of a.stream({ provider: 'jiuwen', model: 'jiuwen-default', ...o })) cs.push(c); return cs }
   assert.equal(handlers['agent/inbox/inserted'], undefined, 'no listener before a card')

@@ -68,7 +68,11 @@ function soft(logger, label, err) {
   logger?.debug?.(`[dsh-jiuwen] host-sync ${label}: ${String(err?.message || err).slice(0, 200)}`)
 }
 
-async function rpcOk(gateway, method, params, logger, label) {
+async function rpcOk(gateway, method, params, logger, label, opts = {}) {
+  if (opts.skip) {
+    soft(logger, label || method, `skipped (${opts.skip})`)
+    return null
+  }
   try {
     const g = gateway()
     if (g.features?.isUnsupported?.(g.gatewayURL || g.url, method)) return null
@@ -81,10 +85,22 @@ async function rpcOk(gateway, method, params, logger, label) {
 
 /**
  * Install all host→Jiuwen sync listeners. Returns disposer.
- * @param {{ ctx, config: () => object, sessions, gateway: () => object, logger, services: () => object, mcpBridge?: object }} deps
+ * @param {{ ctx, config: () => object, sessions, gateway: () => object, logger, services: () => object, mcpBridge?: object, agentcore?: () => object }} deps
+ *
+ * When `config().backend === 'agent-core'`, Gateway RPCs with no sidecar equivalent
+ * (skills/mcp/permissions/schedule/goal/memory/title rename) soft-no-op; delete/fork/pause
+ * use the agentcore transport; model/cwd/plan stay on the session map.
  */
 export function installHostSync(deps) {
-  const { ctx, config, sessions, gateway, logger, services, mcpBridge, permLedger } = deps
+  const { ctx, config, sessions, gateway, logger, services, mcpBridge, permLedger, agentcore, agentcoreRpc } = deps
+  const isAgentCore = () => String(config()?.backend || '').toLowerCase() === 'agent-core'
+  const ac = () => (typeof agentcore === 'function' ? agentcore() : agentcore)
+  const rpc = (method, params, label) => {
+    if (isAgentCore() && typeof deps.agentcoreRpc === 'function') {
+      return Promise.resolve(deps.agentcoreRpc(method, params)).catch(e => { soft(logger, label || method, e); return null })
+    }
+    return rpcOk(gateway, method, params, logger, label)
+  }
   const offs = []
   let disposed = false
   // Skills/permission syncs are serialized (one socket per RPC would otherwise race: a rapid
@@ -121,9 +137,9 @@ export function installHostSync(deps) {
       const tools = presetTools()
       // Record what the preset mirror writes (and the level before it) so the adapter can restore
       // exactly its own global Jiuwen entries later (perm-ledger.js); user values are never adopted.
-      const before = permLedger && tools.length ? (await rpcOk(gateway, 'permissions.tools.get', {}, logger, 'permissions'))?.tools || {} : {}
+      const before = permLedger && tools.length ? (await rpc('permissions.tools.get', {}, 'permissions'))?.tools || {} : {}
       for (const tool of tools) {
-        const r = await rpcOk(gateway, 'permissions.tools.update', { tool, level: lvl }, logger, 'permissions')
+        const r = await rpc('permissions.tools.update', { tool, level: lvl }, 'permissions')
         if (r !== null && permLedger) {
           const prior = before[tool] && typeof before[tool] === 'object' ? before[tool]['*'] : before[tool]
           await permLedger.record(tool, lvl, { owner: 'preset', prior: prior ?? null }).catch(e => soft(logger, 'permissions', e))
@@ -143,7 +159,7 @@ export function installHostSync(deps) {
     if (goalSent.get(params.session_id)?.key === key && now - goalSent.get(params.session_id).at < 2000) return
     goalSent.set(params.session_id, { key, at: now })
     goalLast.set(params.session_id, params.action)
-    return rpcOk(gateway, 'command.goal', params, logger, label)
+    return rpc('command.goal', params, label)
   }
   /**
    * dsh's goal tools (get_goal / update_goal) are passed through to this session's Jiuwen agent:
@@ -194,6 +210,12 @@ export function installHostSync(deps) {
       if (!m || !title || title === m.title) return
       // Renaming a session Jiuwen has not created yet would create an empty orphan session.
       if (!((m.turns || 0) > 0)) { sessions.update(id, { pendingTitle: title }); return }
+      if (isAgentCore()) {
+        // Sidecar has no session.rename; keep title on the dsh mapping only.
+        sessions.update(id, { title, pendingTitle: undefined })
+        soft(logger, 'session.rename', 'agent-core mapping title updated')
+        return
+      }
       await (gateway().sessionRename?.(m.jiuwenSessionId, title)
         ?? gateway().rpc?.('session.rename', { session_id: m.jiuwenSessionId, title }))
       sessions.update(id, { title, pendingTitle: undefined })
@@ -215,9 +237,70 @@ export function installHostSync(deps) {
     queueSkills().catch(() => {})
   })
 
+
+  async function syncSkillsAgentCore(session) {
+    const f = resolveHostSyncFlags(config())
+    const svc = services()
+    const targets = []
+    if (session) {
+      const j = jiuwenSession(session)
+      if (j) targets.push(j)
+    } else {
+      for (const m of sessions.list()) {
+        const id = m.dshSessionId
+        if (sessionUsesProvider({ id }, config().provider, sessions)) {
+          targets.push({ id, mapping: m, cfg: config() })
+        }
+      }
+    }
+    if (!targets.length) return
+    const maxSkills = posInt(config().skillSyncMax, 20)
+    const maxChars = posInt(config().skillBodyMaxChars, 4000)
+    for (const t of targets) {
+      let agent
+      try { agent = svc.agents?.get?.(t.id) } catch { agent = undefined }
+      const reg = scopedService(svc, agent, 'skills')
+      if (!reg?.list) continue
+      const cwd = session?.header?.cwd ?? agent?.session?.header?.cwd ?? t.mapping?.projectDir
+      const opts = { ...(cwd ? { cwd } : {}), ...(agent ? { scope: agent } : {}) }
+      let hostSkills
+      try { hostSkills = await reg.list(opts) } catch { continue }
+      const enabled = []
+      for (const s of hostSkills || []) {
+        if (s?.name && s.invocation?.modelInvocable !== false) enabled.push(String(s.name))
+      }
+      const bodies = []
+      if (f.syncSkillInstall && typeof reg.get === 'function') {
+        for (const name of enabled.slice(0, maxSkills)) {
+          try {
+            const full = await reg.get(name, opts)
+            const content = full?.content
+            if (typeof content === 'string' && content.trim()) {
+              const description = typeof full?.description === 'string' && full.description.trim() !== content.trim()
+                ? skillDescription(full, content) : ''
+              bodies.push({ name, content: truncateSkillBody(content, maxChars), ...(description ? { description } : {}) })
+            }
+          } catch (e) { soft(logger, 'skills.get.ac', e) }
+        }
+      }
+      try {
+        sessions.update(t.id, {
+          skills: enabled.length ? enabled : undefined,
+          skillBodies: bodies.length ? bodies : undefined,
+          skillBodiesInjected: undefined,
+        })
+      } catch (e) { soft(logger, 'skills.map.ac', e) }
+    }
+  }
+
   async function syncSkillsNow(session) {
     const f = resolveHostSyncFlags(config())
     if (!f.syncSkills) return
+    if (isAgentCore()) {
+      // Native agent-core: load host skill bodies into mapping for soft-inject (no Gateway skills.*).
+      await syncSkillsAgentCore(session)
+      return
+    }
     const svc = services()
     // Apply to all mapped jiuwen sessions (session filter when provided).
     const targets = session
@@ -292,12 +375,12 @@ export function installHostSync(deps) {
       try { sessions.update(t.id, patch) } catch (e) { soft(logger, 'skills.map', e) }
       for (const name of known) {
         if (prevKnown.includes(name)) continue
-        await rpcOk(gateway, 'skills.toggle', { name, enabled: true }, logger, 'skills.toggle')
+        await rpc('skills.toggle', { name, enabled: true }, 'skills.toggle')
       }
       // Disable Jiuwen skills the host no longer enables — only those we synced onto this mapping.
       for (const name of prevKnown) {
         if (known.includes(name) || !jwNames.has(name)) continue
-        await rpcOk(gateway, 'skills.toggle', { name, enabled: false }, logger, 'skills.toggle.off')
+        await rpc('skills.toggle', { name, enabled: false }, 'skills.toggle.off')
       }
     }
   }
@@ -436,6 +519,10 @@ export function installHostSync(deps) {
     if (!id || !sessionUsesProvider({ id }, config().provider, sessions)) return
     const m = sessions.get(id)
     if (!m) return
+    if (isAgentCore()) {
+      Promise.resolve(ac()?.cancel?.(m.jiuwenSessionId)).catch(e => soft(logger, 'pause', e))
+      return
+    }
     Promise.resolve(gateway().chatInterrupt?.(m.jiuwenSessionId, 'cancel')
       ?? gateway().rpc?.('chat.interrupt', { session_id: m.jiuwenSessionId, intent: 'cancel' }))
       .catch(e => soft(logger, 'pause', e))
@@ -445,6 +532,12 @@ export function installHostSync(deps) {
   on('agent/resumed', (payload) => {
     const f = resolveHostSyncFlags(config())
     if (!f.syncPause) return
+    if (isAgentCore()) {
+      const session = payload?.agent?.session || payload?.session
+      const j = jiuwenSession(session)
+      if (j) { try { sessions.update(j.id, { paused: false }) } catch (e) { soft(logger, 'resume', e) } }
+      return
+    }
     const session = payload?.agent?.session || payload?.session
     const j = jiuwenSession(session)
     if (!j) return
@@ -474,18 +567,25 @@ export function installHostSync(deps) {
       // Deleted while a turn is in flight: interrupt it and wait for it to settle, so the Jiuwen
       // session the turn creates is deleted too (not orphaned) and the mapping is not re-recorded.
       if (sessions.isActive?.(id)) {
-        try { await (gateway().chatInterrupt?.(m.jiuwenSessionId, 'cancel') ?? gateway().rpc?.('chat.interrupt', { session_id: m.jiuwenSessionId, intent: 'cancel' })) } catch (e) { soft(logger, 'delete.interrupt', e) }
+        try {
+          if (isAgentCore()) await ac()?.cancel?.(m.jiuwenSessionId)
+          else await (gateway().chatInterrupt?.(m.jiuwenSessionId, 'cancel') ?? gateway().rpc?.('chat.interrupt', { session_id: m.jiuwenSessionId, intent: 'cancel' }))
+        } catch (e) { soft(logger, 'delete.interrupt', e) }
         await sessions.idle(id, 15_000)
         m.turns = Math.max(m.turns || 0, sessions.get(id)?.turns || 0, 1) // the turn reached Jiuwen
       }
       try {
         if ((m.turns || 0) > 0) {
-          const g = gateway()
-          await (typeof g.sessionDelete === 'function' ? g.sessionDelete(m.jiuwenSessionId) : g.rpc?.('session.delete', { session_id: m.jiuwenSessionId }))
-          // The stable aux session (compaction/titles) goes with its main session; absent = soft error.
-          if (config().auxSession !== 'fresh') {
-            const aux = `${m.jiuwenSessionId}-aux`
-            await Promise.resolve(typeof g.sessionDelete === 'function' ? g.sessionDelete(aux) : g.rpc?.('session.delete', { session_id: aux })).catch(e => soft(logger, 'session.delete.aux', e))
+          if (isAgentCore()) {
+            await ac()?.sessionDelete?.(m.jiuwenSessionId)
+          } else {
+            const g = gateway()
+            await (typeof g.sessionDelete === 'function' ? g.sessionDelete(m.jiuwenSessionId) : g.rpc?.('session.delete', { session_id: m.jiuwenSessionId }))
+            // The stable aux session (compaction/titles) goes with its main session; absent = soft error.
+            if (config().auxSession !== 'fresh') {
+              const aux = `${m.jiuwenSessionId}-aux`
+              await Promise.resolve(typeof g.sessionDelete === 'function' ? g.sessionDelete(aux) : g.rpc?.('session.delete', { session_id: aux })).catch(e => soft(logger, 'session.delete.aux', e))
+            }
           }
         }
       } catch (e) { soft(logger, 'session.delete', e) }
@@ -511,11 +611,20 @@ export function installHostSync(deps) {
         const parentMap = sessions.get(parentId)
         if (parentMap?.jiuwenSessionId) {
           const pending = Promise.resolve()
-            .then(() => gateway().sessionFork?.(parentMap.jiuwenSessionId)
-              ?? gateway().rpc?.('session.fork', {
-                session_id: parentMap.jiuwenSessionId,
-                source_session_id: parentMap.jiuwenSessionId,
-              }))
+            .then(() => {
+              if (isAgentCore()) {
+                const to = `fork-${Date.now().toString(36)}`
+                return ac()?.sessionFork?.(parentMap.jiuwenSessionId, to, {}).then((r) => ({
+                  session_id: r?.session_id || r?.new_session_id || to,
+                  ...(r || {}),
+                }))
+              }
+              return gateway().sessionFork?.(parentMap.jiuwenSessionId)
+                ?? gateway().rpc?.('session.fork', {
+                  session_id: parentMap.jiuwenSessionId,
+                  source_session_id: parentMap.jiuwenSessionId,
+                })
+            })
             .then((r) => {
               const newId = r?.session_id || r?.new_session_id
               if (newId) {
@@ -569,7 +678,7 @@ export function installHostSync(deps) {
     try { cur = (await gateway().heartbeatConf?.()) || {} } catch { /* unrouted */ }
     if (Number(cur.every) === every) return
     const { every: _e, type: _t, ...rest } = cur || {}
-    await rpcOk(gateway, 'heartbeat.set_conf', { ...rest, target: rest.target || 'web', every }, logger, 'heartbeat.set_conf')
+    await rpc('heartbeat.set_conf', { ...rest, target: rest.target || 'web', every }, 'heartbeat.set_conf')
   }
   on('session/event', (session, event) => {
     if (event?.type !== 'schedule/change') return
@@ -608,6 +717,10 @@ export function installHostSync(deps) {
   const probeMemory = (j) => {
     const f = resolveHostSyncFlags(j.cfg)
     if (!f.syncMemory || j.mapping.memoryBridge || probing.has(j.id)) return
+    if (isAgentCore()) {
+      try { sessions.update(j.id, { memoryBridge: 'adapter' }) } catch { /* ignore */ }
+      return
+    }
     probing.add(j.id)
     Promise.resolve()
       .then(() => gateway().memoryStatus?.(j.mapping.jiuwenSessionId) ?? gateway().rpc?.('memory.status', { session_id: j.mapping.jiuwenSessionId }))
@@ -645,6 +758,15 @@ export function installHostSync(deps) {
   async function syncMcpForSession(j) {
     const f = resolveHostSyncFlags(j.cfg)
     if (!f.syncMcp) return
+    if (isAgentCore()) {
+      try {
+        sessions.update(j.id, {
+          mcpNames: [j.cfg.mcpServerName || 'dsh-tools'],
+          mcpMode: 'local-function',
+        })
+      } catch (e) { soft(logger, 'mcp.ac', e) }
+      return
+    }
     // Ensure dsh-tools proxy is prepared when toolPassthrough=mcp (existing bridge).
     if (j.cfg.toolPassthrough === 'mcp' && mcpBridge?.prepare) {
       try { await mcpBridge.prepare([], j.id) } catch (e) { soft(logger, 'mcp.prepare', e) }

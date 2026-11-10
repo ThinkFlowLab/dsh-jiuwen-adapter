@@ -11,8 +11,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # workflow_dispatch gets a unique group so a stuck queued dispatch cannot block newer ones
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'push' }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -41,6 +42,19 @@ jobs:
         run: npm run lint
       - name: npm test
         run: npm test
+      - name: Agent-core Node suite (fake sidecar)
+        run: npm run test:agentcore
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Sidecar pytest (≥90% coverage)
+        run: |
+          python3 -m pip install -q -U pip
+          npm run test:sidecar
+      - name: Offline end-to-end lane (real Python sidecar, no model key)
+        run: npm run test:e2e:offline
+      - name: Live end-to-end lane skips without opt-in
+        run: npm run test:e2e
       - name: Coverage + test-count baseline
         run: npm run test:coverage
       - name: Live suites skip cleanly without JIUWEN_LIVE

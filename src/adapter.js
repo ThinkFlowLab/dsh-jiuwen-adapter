@@ -8,14 +8,17 @@
  * See ARCHITECTURE.md.
  */
 
+import { resolveAgentCoreModel } from './jiuwen-env.js'
 import { OpenAiTransport } from './openai-transport.js'
 import { GatewayTransport } from './gateway-transport.js'
+import { AgentCoreTransport } from './agentcore-transport.js'
 import { createToolBridge } from './tool-bridge.js'
 import { prepareBrainRequest, callKind } from './agent-brain.js'
 import { appendFileSync } from 'node:fs'
 import { failureFromError, emitTextReply } from './stream-emit.js'
 import { applySystemInjection, applyFsRouteInjection } from './system-inject.js'
 import { applySkillBodyInjection } from './host-sync.js'
+import { buildTurnFeatures, filterHostTools } from './agentcore-features.js'
 import { toGatewayQuery, contentToText, withInferredRoles } from './messages.js'
 import { fileBlocksFromHandles } from './multimodal.js'
 import { carryBlock } from './busy-interrupt.js'
@@ -48,6 +51,7 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
       super()
       this._openai = null
       this._gateway = null
+      this._agentcore = null
     }
 
     _cfg() {
@@ -109,6 +113,37 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
       return this._gateway
     }
 
+    _agentcoreTransport() {
+      const cfg = this._cfg()
+      const key = JSON.stringify([cfg.agentcorePython, cfg.agentcoreCheckpointDir, cfg.requestTimeoutMs, cfg.emitUsage, cfg.forwardReasoning, cfg.eventDisplay, cfg.surfaceGatewayToolEvents])
+      if (!this._agentcore || this._agentcoreKey !== key) {
+        const prev = this._agentcore
+        this._agentcore = new AgentCoreTransport({
+          pythonPath: cfg.agentcorePython,
+          checkpointDir: cfg.agentcoreCheckpointDir,
+          requestTimeoutMs: cfg.requestTimeoutMs,
+          emitUsage: cfg.emitUsage,
+          forwardReasoning: cfg.forwardReasoning,
+          surfaceToolEvents: cfg.surfaceGatewayToolEvents,
+          eventDisplay: cfg.eventDisplay,
+          logger: deps.logger,
+          executeTool: deps.executeTool,
+          env: {
+            ...(process.env.AGENTCORE_FAKE_MODEL ? { AGENTCORE_FAKE_MODEL: process.env.AGENTCORE_FAKE_MODEL } : {}),
+            ...(cfg.apiKeyEnv ? {} : {}),
+          },
+          ...(deps.agentcoreSpawnImpl ? { spawnImpl: deps.agentcoreSpawnImpl } : {}),
+        })
+        this._agentcoreKey = key
+        if (prev && prev !== this._agentcore) {
+          try { prev.shutdown?.() } catch { /* ignore */ }
+        }
+      }
+      // Refresh executeTool each call in case host wired late.
+      if (deps.executeTool) this._agentcore.executeTool = deps.executeTool
+      return this._agentcore
+    }
+
     providerInfo(provider) {
       const cfg = this._cfg()
       return { id: provider, name: cfg.displayName || 'JiuwenSwarm' }
@@ -162,6 +197,7 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
       try { await deps.awaitHostSync?.(dshSessionId) } catch { /* never blocks a turn */ }
       const mapping = deps.sessions.ensure(dshSessionId, reqSession ? { preferredJiuwenId: String(reqSession) } : {})
       const bridge = createToolBridge(cfg, { fetchImpl: deps.fetchImpl })
+      const hostTools = options.tools
       let request = prepareBrainRequest(options, cfg, bridge, deps.logger)
       const kind = callKind(options)
 
@@ -194,8 +230,9 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
           return
         }
         if (cfg.mode === 'gateway') {
+          const useAgentCore = cfg.backend === 'agent-core'
           deps.logger?.info?.(
-            `[dsh-jiuwen] brain=jiuwen gateway chat.send kind=${kind} dsh=${dshSessionId} jiuwen=${mapping.jiuwenSessionId} model=${options.model}`,
+            `[dsh-jiuwen] brain=jiuwen backend=${cfg.backend || 'gateway'} kind=${kind} dsh=${dshSessionId} jiuwen=${mapping.jiuwenSessionId} model=${options.model}`,
           )
           options = await hydrateAttachments(options, deps.attachments?.(), deps.logger)
           if (cfg.documentPersist) options = fileBlocksFromHandles(options)
@@ -261,7 +298,7 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
           const trace = makeTrace(cfg.traceFile)
           let mcpName = cfg.mcpServerName
           let mcpAttached = false
-          if (!aux && cfg.toolPassthrough === 'mcp' && deps.mcpBridge && options.tools?.length) {
+          if (!aux && cfg.backend !== 'agent-core' && cfg.toolPassthrough === 'mcp' && deps.mcpBridge && options.tools?.length) {
             const r = await deps.mcpBridge.prepare(options.tools, dshSessionId, { signal: options.signal })
             mcpName = r?.mcpServerName || cfg.mcpServerName
             trace({ at: 'mcp-passthrough', exposed: deps.mcpBridge.exposed?.(dshSessionId) ?? deps.mcpBridge.exposed(), mcpServerName: mcpName, error: r?.error })
@@ -274,7 +311,11 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
             if (fs.hash) fsRouteHash = fs.hash
           }
           const exposedNow = mcpAttached ? (deps.mcpBridge.exposed?.(dshSessionId) || []) : []
-          if (!aux && cfg.syncSkillInstall !== false && turnMapping.skillBodies?.length) {
+          // Opt-in native agent-core capabilities: per-turn features + host tools they replace.
+          const acTurn = useAgentCore && !aux ? buildTurnFeatures(cfg.agentcore, { tools: hostTools, mapping: turnMapping, skillLoaderTool: cfg.skillLoaderTool }) : undefined
+          if (acTurn?.features) trace({ at: 'agentcore-features', dshSessionId, features: Object.keys(acTurn.features), hide: [...acTurn.hide] })
+          // Native skills read the same dsh skill bodies through SkillUseRail: no second copy in the query.
+          if (!aux && !acTurn?.nativeSkills && cfg.syncSkillInstall !== false && turnMapping.skillBodies?.length) {
             const loader = cfg.skillLoaderTool && exposedNow.includes(cfg.skillLoaderTool) ? `mcp_${mcpName}_${cfg.skillLoaderTool}` : undefined
             query = applySkillBodyInjection(query, turnMapping, { mode: cfg.hostSkillInject, loaderTool: loader,
               onMissingLoader: () => {
@@ -304,7 +345,7 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
           // Goal bridge (Jiuwen submit_goal_report → dsh update_goal): finish the update while this
           // dsh turn is still open, i.e. before passing the turn's `finish` on.
           const goalUpdates = new Set()
-          const gwStream = this._gatewayTransport().stream(request, turnMapping, {
+          const turnHooks = {
             query,
             mark: (name) => trace({ at: 'mark', name }),
             traceParams: (p) => trace({ at: 'params', params: { ...p, content: undefined, query: String(p.query).slice(0, 300) } }),
@@ -314,14 +355,14 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
               // Approval cards defer an interrupt-on-busy until answered; question cards are superseded by interaction.js.
               const approvalLike = q?.eventType === 'plan.approval_required' || /^(permission|confirm)_interrupt$|^swarmflow_human$/.test(String(q?.payload?.source || ''))
               deps.busy?.setAwaiting(dshSessionId, approvalLike ? 'approval' : 'question')
-              try { return await deps.interact({ ...q, told: overrides.supportsUserInteraction === true }, dshSessionId) } finally { deps.busy?.setAwaiting(dshSessionId, null) }
+              try { return await deps.interact({ ...q, told: q?.told === true || overrides.supportsUserInteraction === true }, dshSessionId) } finally { deps.busy?.setAwaiting(dshSessionId, null) }
             } } : {}),
             onEvent: (e) => {
               commitInjected()
               if (!aux && deps.goalBridge) {
                 try { const p = deps.goalBridge.observe(dshSessionId, e); if (p) { goalUpdates.add(p); p.finally(() => goalUpdates.delete(p)) } } catch { /* ignore */ }
               }
-              trace({ at: 'event', type: e.type, name: e.name, event: e.event, ...(e.type === 'interaction_answered' ? { eventType: e.eventType, source: e.source, outcome: e.outcome, raw: JSON.stringify(e.raw).slice(0, 1500) } : {}) })
+              trace({ at: 'event', type: e.type, name: e.name, event: e.event, ...(e.type === 'adapter_phase' ? { phases: e.phases } : {}), ...(e.type === 'tool_call' ? { id: e.id, arguments: e.arguments } : {}), ...(e.type === 'tool_result' ? { id: e.id, success: e.success, result: typeof e.result === 'string' ? e.result.slice(0, 4000) : e.result } : {}), ...(e.type === 'interaction_answered' ? { eventType: e.eventType, source: e.source, outcome: e.outcome, raw: JSON.stringify(e.raw).slice(0, 1500) } : {}) })
               try { overrides.onEvent?.(e) } catch { /* ignore */ }
               try { deps.onEvent?.({ dshSessionId, ...e }) } catch { /* ignore */ }
             },
@@ -336,7 +377,39 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
               // {is_complete} arrives, so bridges (planBridge) key off this explicit turn_end event.
               if (!aux) { try { deps.onEvent?.({ dshSessionId, type: 'turn_end', sessionId: turnMapping.jiuwenSessionId, requestId: info.requestId, reason: info.reason }) } catch { /* ignore */ } }
             },
-          })
+          }
+          if (useAgentCore) {
+            // Migration: mapping created under Gateway keeps working as a new sidecar session
+            // (checkpointer is empty → history starts fresh). Surface once per session.
+            if ((turnMapping.turns || 0) > 0 && turnMapping.backendOrigin === 'gateway' && !turnMapping.backendMigratedNote) {
+              deps.logger?.warn?.(`[dsh-jiuwen] session ${dshSessionId} was started on Gateway; agent-core continues with a fresh sidecar history (set backend: gateway to keep Gateway state)`)
+              try { deps.sessions.update?.(dshSessionId, { backendMigratedNote: true }) } catch { /* ignore */ }
+            }
+            if (!turnMapping.backendOrigin) {
+              try { deps.sessions.update?.(dshSessionId, { backendOrigin: 'agent-core' }) } catch { /* ignore */ }
+            }
+          }
+          if (!useAgentCore && !turnMapping.backendOrigin) {
+            try { deps.sessions.update?.(dshSessionId, { backendOrigin: 'gateway' }) } catch { /* ignore */ }
+          }
+          let acSystem = options.system
+          if (useAgentCore && turnMapping.goal?.objective) {
+            const g = turnMapping.goal
+            const goalBlock = `[Active goal — phase=${g.phase || 'active'}]\n${g.objective}\n[/Active goal]`
+            acSystem = acSystem ? `${goalBlock}\n\n${acSystem}` : goalBlock
+          }
+          const gwStream = useAgentCore
+            ? this._agentcoreTransport().stream(request, turnMapping, {
+                ...turnHooks,
+                tools: filterHostTools(hostTools, acTurn?.hide),
+                system: acSystem,
+                ...(acTurn?.features ? { features: acTurn.features } : {}),
+                ...(overrides.runKind ? { runKind: overrides.runKind } : {}),
+                model: resolveAgentCoreModel(cfg, options, overrides),
+                cwd: overrides.projectDir || cfg.projectDir || turnMapping.projectDir,
+                plan: (overrides.chatMode || turnMapping.chatMode || cfg.chatMode) === 'agent.plan' || undefined,
+              })
+            : this._gatewayTransport().stream(request, turnMapping, turnHooks)
           for await (const chunk of gwStream) {
             if (chunk?.type === 'finish' && goalUpdates.size) await Promise.allSettled([...goalUpdates])
             yield chunk
@@ -397,6 +470,7 @@ export function turnOverrides(cfg, options) {
     historyMode: req.historyMode ?? cfg.historyMode,
     ...(modelName ? { modelName } : {}),
     ...(typeof req.onEvent === 'function' ? { onEvent: req.onEvent } : {}),
+    ...(['heartbeat', 'cron', 'goal'].includes(req.runKind) ? { runKind: req.runKind } : {}),
   }
 }
 

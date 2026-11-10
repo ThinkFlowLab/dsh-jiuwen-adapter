@@ -46,6 +46,29 @@ export type JiuwenPlanEvent = JiuwenEventBase & { type: 'plan'; event: string; i
 export type JiuwenSwarmEvent = JiuwenEventBase & { type: 'swarm'; event: string; runId?: string; summary?: string }
 
 /** Plugin config. Unknown or misspelled keys are reported as warnings at load (never thrown). */
+type AcFlag<T = {}> = boolean | ({ enabled?: boolean } & T)
+/** `agentcore` plugin config. Secrets are never inline: only env var names (`*Env`). */
+export interface AgentcoreFeaturesConfig {
+  skills?: AcFlag<{ mode?: 'all' | 'auto_list'; maxSkills?: number; maxTotalChars?: number }>
+  planning?: AcFlag<{ mirror?: boolean; progressReminder?: boolean; interval?: number }>
+  memory?: AcFlag<{ scope?: 'global' | 'project' | 'session'; proactive?: boolean; coding?: boolean
+    embedding?: { model?: string; apiBase?: string; apiKeyEnv?: string }
+    external?: { provider: string; options?: Record<string, unknown>; apiKeyEnv?: string; userId?: string; scopeId?: string } }>
+  subagents?: AcFlag<{ async?: boolean; taskLoop?: boolean; maxIterations?: number
+    agents?: Array<{ name: string; description?: string; systemPrompt?: string; maxIterations?: number }> }>
+  interrupts?: AcFlag<{ askUser?: boolean; confirmTools?: string[] }>
+  security?: boolean
+  anomaly?: boolean
+  heartbeat?: boolean
+  progressiveTools?: AcFlag<{ limit?: number }>
+  sysOperation?: AcFlag<{ readOnly?: boolean; code?: boolean }>
+  mcp?: AcFlag<{ servers?: Array<Record<string, unknown>>; resources?: boolean }>
+  kvCache?: boolean
+  moa?: AcFlag<{ referenceModels?: Array<string | { model?: string; apiBase?: string; apiKeyEnv?: string; provider?: string }>; mode?: 'aggregator_on_demand' | 'verifier_routed' | 'jev_routed' }>
+  rag?: AcFlag<{ paths?: string[]; maxFiles?: number; maxBytes?: number }>
+  otel?: AcFlag<{ exporter?: 'file' | 'otlp_grpc' | 'otlp_http' | 'langfuse' | 'console'; endpoint?: string; tracesDir?: string; serviceName?: string }>
+}
+
 export interface JiuwenAdapterConfig {
   accessToken?: string
   agentGroupName?: string
@@ -116,6 +139,10 @@ export interface JiuwenAdapterConfig {
   busyIgnoreSources?: string[]
   llmAdapterModule?: string
   mappingPath?: string
+  /** Sidecar python binary (default: .venv-sidecar/bin/python). */
+  agentcorePython?: string
+  /** Sidecar sqlite checkpointer directory. */
+  agentcoreCheckpointDir?: string
   mcpRpcTimeoutMs?: number
   /** Release a per-session MCP proxy after this long idle (ms, 0 = only on session end). Default 1800000. */
   mcpSessionIdleMs?: number
@@ -128,6 +155,12 @@ export interface JiuwenAdapterConfig {
   mcpServerName?: string
   mcpStateDir?: string
   mode?: 'gateway' | 'openai'
+  /** Product backend when mode=gateway (default agent-core). */
+  backend?: 'gateway' | 'agent-core'
+  /** backend=agent-core: also route marked RPCs to a reachable Gateway. Default false. */
+  gatewayFallback?: boolean
+  /** Opt-in openjiuwen agent-core capabilities (backend=agent-core). All default off. See docs/agentcore-capabilities.md. */
+  agentcore?: AgentcoreFeaturesConfig
   modelDiscovery?: boolean
   models?: Array<{ id: string; name?: string; contextWindow?: number; maxTokens?: number; chatMode?: string }>
   noUiAnswer?: boolean
@@ -190,6 +223,10 @@ export interface JiuwenAdapterConfig {
 
 export interface JiuwenAdapterService {
   readonly provider: string
+  /** Active product backend (`gateway` | `agent-core`). */
+  backend(): string
+  /** True when `backend === 'agent-core'`. */
+  isAgentCore(): boolean
   onEvent(listener: (event: JiuwenEvent) => void): () => void
   jiuwenSessionId(dshSessionId: string): string
   /** Run a `/jiuwen` sub-command (e.g. 'status', 'models', 'model <name>') for a host session. */

@@ -1,3 +1,7 @@
+> **Backend scope:** agent-core is now the default and needs no Gateway.
+> WebSocket/MCP-proxy/global-permission details below describe `backend: gateway`.
+> For current setup, options and backend limits see [README](../README.md) and the agent-core capability guide.
+
 # Host → Jiuwen sync
 
 Everything the dsh frontend can change is forwarded to JiuwenSwarm for **jiuwen-provider sessions only**. Non-jiuwen providers are never touched. Every path is fail-soft and Gateway methods are feature-detected.
@@ -46,3 +50,8 @@ Also default on with `hostSync`: `sessionSync` (mapping upkeep), `planBridge` (J
 ## Config
 
 See [configuration.md](./configuration.md). Env: `JIUWEN_HOST_SYNC`, `JIUWEN_SYNC_SKILLS`, `JIUWEN_SYNC_MCP`, …
+
+## agent-core backend
+
+With `backend: agent-core` (the default) the same hostSync flags apply. Gateway RPCs are served by the sidecar + session map + `agentcore-state.json` (see [agent-core.md](./agent-core.md#parity-checklist)). Host tools use LocalFunction → `ctx.tools.execute` (dsh permissions / auto-review apply natively).
+

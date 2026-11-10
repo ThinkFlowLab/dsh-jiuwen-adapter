@@ -1,3 +1,7 @@
+> **Backend scope:** agent-core is now the default and needs no Gateway.
+> WebSocket/MCP-proxy/global-permission details below describe `backend: gateway`.
+> For current setup, options and backend limits see [README](../README.md) and the agent-core capability guide.
+
 # Using the adapter
 
 [← README](../README.md)

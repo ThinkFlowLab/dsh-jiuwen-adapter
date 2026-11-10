@@ -35,7 +35,7 @@ export function makeHost(mock, config = {}, { services = {}, commands = [], list
     emit(name, ...args) { emitted.push([name, ...args]) },
     inject(_deps, cb) { cb({ commands: { register(d) { if (commands.some(c => c.name === d.name)) throw new Error(`duplicate command ${d.name}`); commands.push(d); return () => {} } }, on() {} }) },
   }
-  plugin.apply(ctx, { gatewayURL: mock.url, mappingPath: join(mock.dir, `m-${Math.random()}.json`), finalGraceMs: 200, ...config })
+  plugin.apply(ctx, { gatewayURL: mock.url, mappingPath: join(mock.dir, `m-${Math.random()}.json`), finalGraceMs: 200, backend: 'gateway', ...config })
   const def = commands.find(c => c.name === (config.commandName || 'jiuwen'))
   return {
     ctx, api: ctx[config.serviceName || 'jiuwenAdapter'], adapter: adapters.get(config.provider || 'jiuwen'), listeners, emitted, commands,

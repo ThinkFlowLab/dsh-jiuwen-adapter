@@ -37,7 +37,7 @@ const ctx = new Context()
 ctx.plugin(llmMod.default)
 const dir = mkdtempSync(join(tmpdir(), 'jw-stress-'))
 const plugin = await import(pathToFileURL(join(ROOT, 'index.js')).href)
-const mk = url => ctx.plugin(plugin, { gatewayURL: url, mappingPath: join(dir, `${url.length}-${Date.now()}.json`), requestTimeoutMs: 120_000, mode: 'gateway' })
+const mk = url => ctx.plugin(plugin, { gatewayURL: url, mappingPath: join(dir, `${url.length}-${Date.now()}.json`), requestTimeoutMs: 120_000, mode: 'gateway', backend: 'gateway' })
 let fork = mk(URL_)
 await tick(300)
 const api = () => ctx.get?.('jiuwenAdapter') ?? ctx.jiuwenAdapter
