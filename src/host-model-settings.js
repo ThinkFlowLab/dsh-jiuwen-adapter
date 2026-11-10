@@ -74,8 +74,10 @@ export function installHostModelSettings({ ctx, readConfig, logger } = {}) {
   try {
     if (typeof ctx?.inject === 'function') {
       ctx.inject(['settings'], (child) => {
-        const configure = child?.settings?.configure
-        if (typeof configure !== 'function') return
+        const settings = child?.settings
+        if (typeof settings?.configure !== 'function') return
+        // Keep the service receiver: dsh's settings/llm methods use `this`.
+        const configure = (...args) => settings.configure(...args)
         const fiber = ctx.fiber
         if (typeof child.effect === 'function') {
           child.effect(() => configure({ auto: false }, fiber), 'llm-jiuwen settings')
@@ -91,8 +93,9 @@ export function installHostModelSettings({ ctx, readConfig, logger } = {}) {
 
   // Appear as a configurable provider on Settings → Models.
   try {
-    const register = ctx?.llm?.registerConfigurableProviders
-    if (typeof register === 'function') {
+    const llm = ctx?.llm
+    if (typeof llm?.registerConfigurableProviders === 'function') {
+      const register = (entries) => llm.registerConfigurableProviders(entries)
       const entry = () => {
         const c = typeof readConfig === 'function' ? readConfig() : cfg0
         return {

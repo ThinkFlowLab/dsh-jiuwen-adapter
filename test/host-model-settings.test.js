@@ -206,3 +206,31 @@ test('resolveChildEnv injects a credential into the sidecar env bag', async () =
   }
   inst.dispose()
 })
+
+test('installHostModelSettings keeps the receiver of dsh llm/settings methods', () => {
+  // Real dsh LlmRuntime.registerConfigurableProviders and settings.configure
+  // read `this`; an unbound call threw and the Models card never appeared.
+  class Llm {
+    constructor() { this.directory = new Map(); this.ctx = { effect: fn => fn() } }
+    registerConfigurableProviders(list) {
+      for (const e of list) this.directory.set(e.provider, e)
+      return () => this.directory.clear()
+    }
+  }
+  class Settings {
+    constructor() { this.calls = [] }
+    configure(opts) { this.calls.push(opts); return () => {} }
+  }
+  const llm = new Llm(), settings = new Settings()
+  const ctx = {
+    fiber: { entry: { options: { id: SETTINGS_NS } } },
+    llm,
+    inject(_deps, cb) { cb({ settings, effect: fn => fn() }) },
+    get() {},
+  }
+  const inst = installHostModelSettings({ ctx, readConfig: () => ({}), logger: { debug() {} } })
+  assert.equal(llm.directory.get('jiuwen')?.displayName, 'JiuwenSwarm')
+  assert.equal(settings.calls[0]?.auto, false)
+  inst.dispose()
+  assert.equal(llm.directory.size, 0)
+})

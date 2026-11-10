@@ -64,3 +64,33 @@ test('shipped client bundle is a ModuleLoader factory for this package', () => {
   assert.match(src, /exports\.apply|module\.exports/)
   assert.doesNotMatch(src, /sk-[A-Za-z0-9]{8,}/)
 })
+
+test('shipped client bundle renders the Models card (react import survives the build)', () => {
+  const root = dirname(dirname(fileURLToPath(import.meta.url)))
+  const src = readFileSync(join(root, 'lib/client.js'), 'utf8')
+  let factory
+  const window = { __ModuleLoader__: { load: (m) => { factory = m.factory } } }
+  new Function('window', src)(window)
+  const calls = []
+  const react = {
+    createElement: (type, props, ...children) => { calls.push(type); return { type, props, children } },
+    useState: (v) => [v, () => {}],
+    useEffect: () => {},
+  }
+  const mod = factory((id) => { if (id === 'react') return react; throw new Error('unexpected require ' + id) })
+  let card
+  const ctx = {
+    slots: {
+      inject: (_name, fn) => { for (const v of fn()) void v },
+      register: (_opts, component) => { card = component; return () => {} },
+    },
+    remote: {},
+  }
+  mod.apply(ctx)
+  assert.equal(typeof card, 'function')
+  const el = card({ provider: { settingsNs: 'llm-jiuwen' } })
+  assert.equal(el.type, mod.JiuwenModelsCard)
+  const tree = mod.JiuwenModelsCard({ ctx })
+  assert.equal(tree.type, 'div')
+  assert.ok(calls.includes('input'))
+})
