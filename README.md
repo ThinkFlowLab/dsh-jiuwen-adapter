@@ -2,7 +2,7 @@
 
 <h1 align="center">dsh-jiuwen-adapter</h1>
 
-<p align="center"><b>Use JiuwenSwarm as the brain of dsh, with your other dsh plugins still working.</b></p>
+<p align="center"><b>Use Jiuwen as the brain of dsh, with your other dsh plugins still working.</b></p>
 
 <p align="center">
   <a href="https://github.com/ThinkFlowLab/dsh-jiuwen-adapter/actions/workflows/ci.yml"><img src="https://github.com/ThinkFlowLab/dsh-jiuwen-adapter/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
@@ -16,10 +16,9 @@
 
 ---
 
-A compatibility-first Cordis provider for dsh. **The default backend is a local
-[openjiuwen](https://pypi.org/project/openjiuwen/) DeepAgent sidecar: no Gateway,
-AgentServer, or JiuwenSwarm installation is required.** dsh keeps its UI, sessions,
-plugins, tool execution and permission checks; agent-core runs the agent loop.
+A compatibility-first Cordis provider for dsh. It has two backends.
+
+**Agent-core (default).** A local [openjiuwen](https://pypi.org/project/openjiuwen/) DeepAgent sidecar: no Gateway, AgentServer, or JiuwenSwarm installation is required. dsh keeps its UI, sessions, plugins, tool execution and permission checks; agent-core runs the agent loop.
 
 ```mermaid
 flowchart LR
@@ -27,6 +26,15 @@ flowchart LR
   C -->|"tool calls"| D
   C --> M["Your model endpoint"]
 ```
+
+**JiuwenSwarm Gateway.** Each turn goes to the [JiuwenSwarm](https://pypi.org/project/workswarm/) Gateway, which runs its own agents, tools and memory. Use this path for team/workflow execution, marketplace operations, or to keep existing Gateway-owned history.
+
+```mermaid
+flowchart LR
+  D["dsh + plugins"] -->|ctx.llm · provider=jiuwen| A["jiuwen adapter"] -->|"WS chat.send"| G["JiuwenSwarm Gateway :19000"]
+```
+
+Set `backend: gateway` to use this path. Details: [Quickstart](./docs/quickstart.md) and [backend migration](./docs/agent-core.md).
 
 ## Quickstart
 
@@ -54,7 +62,8 @@ Append this to the profile's existing `cordis.patch.yml` (do not replace other p
 ```
 
 Run `dsh --profile web`. Existing `~/.jiuwenswarm/config/.env` model settings are
-also recognized. See [Quickstart](./docs/quickstart.md) for headless and Gateway setup.
+also recognized. Headless setup, and the Gateway path (`backend: gateway`), are in
+[Quickstart](./docs/quickstart.md).
 
 ## What runs where
 
