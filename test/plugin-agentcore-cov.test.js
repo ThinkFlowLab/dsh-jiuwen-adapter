@@ -146,3 +146,31 @@ test('plugin disposal shuts down an existing sidecar exactly once without starti
     assert.equal(closed,1)
   } finally { rmSync(dir,{recursive:true,force:true}) }
 })
+
+test('agent-core host callbacks use the dsh >=0.2.2 batch tools.execute shape', async () => {
+  // dsh 0.2.2 executeToolBatch reads input.calls and returns { results: [{ callId, result }] };
+  // a bare single exec made it throw "Tool batch execution failed".
+  const dir = mkdtempSync(join(tmpdir(), 'plug-ac-batch-'))
+  const agent = { id: 'host-session' }
+  const agents = { get: id => id === agent.id ? agent : undefined }
+  const seen = []
+  const tools = { execute: async input => {
+    assert.ok(Array.isArray(input.calls), 'batch calls present')
+    const [block] = input.calls
+    seen.push({ name: block.name, args: JSON.parse(block.arguments) })
+    return { results: [{ callId: block.id, result: { content: [{ type: 'text', text: 'BATCH_OK' }] } }], additionalContexts: [], concluded: false }
+  } }
+  const { ctx, adapters, hooks } = makeCtx({ tools, agents })
+  plugin.apply(ctx, { backend: 'agent-core', hostSync: false, sessionSync: false, planBridge: false, mappingPath: join(dir, 'map.json') })
+  const transport = adapters.get('jiuwen')._agentcoreTransport()
+  try {
+    assert.equal(await transport.executeTool('bash', { command: 'echo hi', timeout: null }, { dshSessionId: agent.id, callId: 'c1' }), 'BATCH_OK')
+    assert.deepEqual(seen, [{ name: 'bash', args: { command: 'echo hi' } }])
+    tools.execute = async input => ({ results: [{ callId: input.calls[0].id, result: { isError: true, content: [{ type: 'text', text: 'denied' }] } }] })
+    await assert.rejects(transport.executeTool('bash', { command: 'x' }, { dshSessionId: agent.id }), /denied/)
+  } finally {
+    await transport.shutdown()
+    for (const fn of hooks.dispose || []) fn()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

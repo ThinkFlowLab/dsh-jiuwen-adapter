@@ -1,7 +1,7 @@
 const { createElement: h, useEffect, useState } = require('react')
 const {
-  SETTINGS_NS, DEFAULT_API_KEY_ENV, DEFAULT_MODELS,
-  modelsFromValue, validateModels, pathOpsForDraft, namespaceValue,
+  SETTINGS_NS, DEFAULT_API_KEY_ENV,
+  modelsFromValue, defaultFromValue, modelsForSave, validateModels, pathOpsForDraft, namespaceValue,
 } = require('./form-logic.js')
 
 const inject = ['slots', 'remote', 'remote.credentials', 'remote.settings']
@@ -12,7 +12,7 @@ function copy(en, zh) {
 }
 
 function emptyModel() {
-  return { id: '', name: '', modelName: '', contextWindow: 128000, maxTokens: 8192 }
+  return { id: '', name: '', contextWindow: 128000, maxTokens: 8192 }
 }
 
 function JiuwenModelsCard(props) {
@@ -23,12 +23,12 @@ function JiuwenModelsCard(props) {
   const [busy, setBusy] = useState(false)
   const [revision, setRevision] = useState(undefined)
   const [baseURL, setBaseURL] = useState('')
-  const [defaultModel, setDefaultModel] = useState('jiuwen-default')
+  const [defaultModel, setDefaultModel] = useState('')
   const [apiKeyEnv, setApiKeyEnv] = useState(DEFAULT_API_KEY_ENV)
   const [keyDraft, setKeyDraft] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [keyConfigured, setKeyConfigured] = useState(false)
-  const [models, setModels] = useState(DEFAULT_MODELS.map(m => ({ ...m, modelName: '' })))
+  const [models, setModels] = useState([emptyModel()])
   const [writable, setWritable] = useState(true)
 
   async function load() {
@@ -47,9 +47,10 @@ function JiuwenModelsCard(props) {
       const value = (ns && typeof ns.value === 'object' && ns.value) || {}
       setRevision(ns?.revision)
       setBaseURL(typeof value.baseURL === 'string' ? value.baseURL : '')
-      setDefaultModel(typeof value.defaultModel === 'string' ? value.defaultModel : 'jiuwen-default')
+      const rows = modelsFromValue(value)
+      setModels(rows.length ? rows : [emptyModel()])
+      setDefaultModel(defaultFromValue(value, rows))
       setApiKeyEnv(typeof value.apiKeyEnv === 'string' && value.apiKeyEnv ? value.apiKeyEnv : DEFAULT_API_KEY_ENV)
-      setModels(modelsFromValue(value).map(m => ({ modelName: '', ...m })))
       const ref = (typeof value.apiKeyEnv === 'string' && value.apiKeyEnv) || DEFAULT_API_KEY_ENV
       if (ctx.remote.credentials?.describe) {
         const info = await ctx.remote.credentials.describe([ref])
@@ -81,17 +82,12 @@ function JiuwenModelsCard(props) {
         setKeyDraft('')
         setKeyConfigured(true)
       }
+      const saved = modelsForSave(models)
       const after = {
         baseURL: baseURL.trim(),
-        defaultModel: defaultModel.trim() || models[0]?.id,
+        defaultModel: saved.some(m => m.id === defaultModel.trim()) ? defaultModel.trim() : saved[0]?.id,
         apiKeyEnv: ref,
-        models: models.map(m => ({
-          id: m.id.trim(),
-          name: (m.name || m.id).trim(),
-          ...(m.modelName && m.modelName.trim() ? { modelName: m.modelName.trim() } : {}),
-          ...(Number(m.contextWindow) > 0 ? { contextWindow: Number(m.contextWindow) } : {}),
-          ...(Number(m.maxTokens) > 0 ? { maxTokens: Number(m.maxTokens) } : {}),
-        })),
+        models: saved,
       }
       const ops = pathOpsForDraft({}, after)
       if (ops.length && ctx.remote.settings?.mutate) {
@@ -114,13 +110,13 @@ function JiuwenModelsCard(props) {
 
   const labelStyle = { display: 'block', fontSize: 12, margin: '10px 0 4px', opacity: 0.8 }
   const inputStyle = { width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: 6, border: '1px solid color-mix(in srgb, currentColor 20%, transparent)', background: 'transparent', color: 'inherit' }
-  const rowStyle = { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 6, marginBottom: 6, alignItems: 'center' }
+  const rowStyle = { display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: 6, marginBottom: 6, alignItems: 'center' }
 
   return h('div', { style: { marginTop: 8, padding: '8px 0 4px' } },
     h('p', { style: { margin: '0 0 8px', fontSize: 13, lineHeight: 1.45 } },
       copy(
-        'Set the endpoint, API key and model list here. Then pick a Jiuwen model in the composer (or set it as the default). Changes apply on the next turn.',
-        '在这里填写接口地址、API Key 和模型列表，然后在对话输入框里选择 Jiuwen 模型（或设为默认）。下次对话即生效。',
+        'Set the endpoint, API key and model names here. Each model then shows up by name in the composer model picker. Changes apply on the next turn.',
+        '在这里填写接口地址、API Key 和模型名。每个模型会按名字出现在对话输入框的模型选择里。下次对话即生效。',
       ),
     ),
     h('label', { style: labelStyle }, copy('Endpoint (API base)', '接口地址（API Base）')),
@@ -155,15 +151,12 @@ function JiuwenModelsCard(props) {
     ),
     h('label', { style: labelStyle }, copy('Models', '模型')),
     models.map((m, i) => h('div', { key: i, style: rowStyle },
-      h('input', { style: inputStyle, placeholder: copy('id (sent to the API)', 'id（发给接口的模型名）'), value: m.id, disabled: !writable || busy, onChange: (e) => {
+      h('input', { style: inputStyle, placeholder: copy('model name, e.g. doubao-seed-2.0-mini', '模型名，例如 doubao-seed-2.0-mini'), value: m.id, disabled: !writable || busy, onChange: (e) => {
         const next = models.slice(); next[i] = { ...m, id: e.target.value }; setModels(next)
         if (defaultModel === m.id) setDefaultModel(e.target.value)
       } }),
-      h('input', { style: inputStyle, placeholder: copy('display name', '显示名'), value: m.name, disabled: !writable || busy, onChange: (e) => {
+      h('input', { style: inputStyle, placeholder: copy('display name (optional)', '显示名（可选）'), value: m.name, disabled: !writable || busy, onChange: (e) => {
         const next = models.slice(); next[i] = { ...m, name: e.target.value }; setModels(next)
-      } }),
-      h('input', { style: inputStyle, placeholder: copy('API name if id is an alias', '若 id 是别名，填写真实模型名'), value: m.modelName || '', disabled: !writable || busy, onChange: (e) => {
-        const next = models.slice(); next[i] = { ...m, modelName: e.target.value }; setModels(next)
       } }),
       h('button', { type: 'button', disabled: !writable || busy || models.length < 2, onClick: () => {
         const next = models.filter((_, j) => j !== i)

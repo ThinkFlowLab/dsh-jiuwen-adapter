@@ -49,8 +49,9 @@ dsh --profile web
 ```
 
 In the dsh UI open **Settings → Models**, select **JiuwenSwarm**, and fill in the
-API key, endpoint, and model list. Then pick a Jiuwen model in the composer
-(or set it as the default). You do not need to edit `cordis.patch.yml` or export
+API key, endpoint, and model names (e.g. `doubao-seed-2.0-mini`). Each one
+appears by name under JiuwenSwarm in the composer model picker; pick one (or set
+it as the default). You do not need to edit `cordis.patch.yml` or export
 `AGENTCORE_MODEL` / `AGENTCORE_API_BASE` to choose a model.
 
 Headless setup, env fallbacks, and the Gateway path (`backend: gateway`) are in

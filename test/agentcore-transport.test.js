@@ -576,3 +576,45 @@ test('concurrent sessions isolate chunks, host tool execution and native approva
     assert.deepEqual(asks.sort(),['A','B'])
   } finally { await t.shutdown() }
 })
+
+test('failureCode always yields a non-empty string for dsh LlmError', async () => {
+  const { failureCode } = await import('../src/agentcore-transport.js')
+  assert.equal(failureCode('RATE_LIMIT'), 'RATE_LIMIT')
+  assert.equal(failureCode(181001), 'AGENTCORE_181001')
+  assert.equal(failureCode(-32000), 'AGENTCORE_-32000')
+  assert.equal(failureCode(''), 'AGENTCORE')
+  assert.equal(failureCode(undefined), 'AGENTCORE')
+})
+
+test('credential change recycles the sidecar without failing the next turn', async () => {
+  // Live: saving a new key in Settings -> Models made the very next turn fail
+  // with "agent-core sidecar exited ... SIGTERM" — the recycled child's late
+  // exit was broadcast to the turn already running on its replacement.
+  let key = 'key-one'
+  const base = spawnFake([{ type: 'text', text: 'hello' }])
+  const spawnImpl = (cmd, args, opts) => {
+    const child = base(cmd, args, opts)
+    const kill = child.kill.bind(child)
+    child.kill = (sig) => { setTimeout(() => kill(sig), 400); return true }
+    return child
+  }
+  const t = new AgentCoreTransport({
+    spawnImpl,
+    resolveChildEnv: async () => ({ JIUWEN_API_KEY: key, API_KEY: key }),
+    logger: { warn() {}, error() {} },
+  })
+  const turn = async (sid) => collect(t.stream({ messages: [{ role: 'user', content: 'hi' }] }, { jiuwenSessionId: sid }, { query: 'hi' }))
+  try {
+    const first = await turn('s1')
+    assert.equal(first.at(-1).reason.kind, 'stop')
+    key = 'key-two'
+    const second = await turn('s2')
+    assert.equal(second.at(-1).reason.kind, 'stop', JSON.stringify(second.at(-1)))
+    assert.equal(second.filter(c => c.type === 'text-delta').map(c => c.text).join(''), 'hello')
+    await new Promise(r => setTimeout(r, 600))
+    const third = await turn('s3')
+    assert.equal(third.at(-1).reason.kind, 'stop', JSON.stringify(third.at(-1)))
+  } finally {
+    await t.shutdown()
+  }
+})

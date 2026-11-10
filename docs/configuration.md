@@ -141,7 +141,11 @@ Auth resolution order (matches Jiuwen web_proxy): query `access_token`/`token` �
 ```
 
 In the web UI, set the endpoint, API key and model list under **Settings → Models**
-for JiuwenSwarm, then pick the model in the composer (or set it as the default).
+for JiuwenSwarm, then pick the model by name in the composer (or set it as the default).
+With `backend: agent-core` the picker lists the real model names (`modelName`, else `id`);
+legacy alias rows (`jiuwen-default`, `jiuwen-swarm`) without a `modelName` are hidden.
+With nothing configured it lists `AGENTCORE_MODEL` / `MODEL_NAME`. `backend: gateway`
+keeps the Jiuwen catalog ids.
 That is the primary path; you do not need to hand-edit `agent-default-model` or
 export `AGENTCORE_MODEL` / `AGENTCORE_API_BASE` just to choose a model.
 
@@ -151,10 +155,12 @@ The sidecar resolves the **endpoint** in this order: the `baseURL` saved in
 **Settings → Models** (plugin config, skipping the diagnostic placeholder) →
 `AGENTCORE_API_BASE` → `API_BASE` → Jiuwen dotenv `API_BASE`.
 
-The **model name** is the model the user selected in the dsh composer (or the
-catalog `modelName` when the picker still shows an alias such as `jiuwen-default`).
-Only when that selection is a bare alias with no catalog `modelName` does the
-sidecar fall back to `AGENTCORE_MODEL` → `MODEL_NAME` → dotenv `MODEL_NAME`.
+The **model name** is the model the user selected in the dsh composer. A legacy
+alias selection such as `jiuwen-default` (for example an old `agent-default-model`)
+maps to the alias row's `modelName` → `defaultModel` → the first configured model →
+`AGENTCORE_MODEL` → `MODEL_NAME` → dotenv `MODEL_NAME`. While the host default still
+points at an alias, the picker keeps it as one extra entry labeled
+`<model> (default)` so it stays selectable; it disappears once a real model is chosen.
 
 **Credentials** resolve from the dsh credentials store (the Models page writes
 the key write-only under `apiKeyEnv`, default `JIUWEN_API_KEY`) → `JIUWEN_API_KEY`

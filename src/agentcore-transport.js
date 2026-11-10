@@ -143,18 +143,24 @@ export class AgentCoreTransport {
     })
 
     const onLine = (line) => this._onLine(line, gen)
+    let rl = null
     if (child.stdout && typeof child.stdout.on === 'function') {
-      this._rl = createInterface({ input: child.stdout, crlfDelay: Infinity })
-      this._rl.on('line', onLine)
+      rl = createInterface({ input: child.stdout, crlfDelay: Infinity })
+      rl.on('line', onLine)
+      this._rl = rl
     }
 
+    // Fail only what this child owned. A child recycled for new UI credentials
+    // exits after its replacement started; its exit must not fail requests or
+    // turns already running on the replacement.
     const failPending = (err) => {
-      for (const [, p] of this._pending) {
+      for (const [id, p] of this._pending) {
+        if (p.gen !== undefined && p.gen !== gen) continue
+        this._pending.delete(id)
         try { p.reject(err) } catch { /* ignore */ }
       }
-      this._pending.clear()
       for (const fn of [...this._listeners]) {
-        try { fn({ event: '_process_exit', params: { error: String(err.message || err) } }) } catch { /* ignore */ }
+        try { fn({ event: '_process_exit', params: { error: String(err.message || err), gen } }) } catch { /* ignore */ }
       }
     }
 
@@ -165,8 +171,10 @@ export class AgentCoreTransport {
     })
     child.on?.('exit', (code, signal) => {
       if (this._proc === child) this._proc = null
-      try { this._rl?.close?.() } catch { /* ignore */ }
-      this._rl = null
+      // Close only this child's reader: a recycled child exits after its
+      // replacement is already reading.
+      try { rl?.close?.() } catch { /* ignore */ }
+      if (this._rl === rl) this._rl = null
       const err = new Error(`agent-core sidecar exited code=${code} signal=${signal || ''}`)
       failPending(err)
       if (!this._closed) this._restartCount += 1
@@ -239,6 +247,7 @@ export class AgentCoreTransport {
       }, timeoutMs)
       timer.unref?.()
       this._pending.set(id, {
+        gen: this._bufGeneration,
         resolve: (v) => { clearTimeout(timer); resolve(v) },
         reject: (e) => { clearTimeout(timer); reject(e) },
       })
@@ -432,6 +441,9 @@ export class AgentCoreTransport {
 
     const onEvt = (msg) => {
       if (msg.event === '_process_exit') {
+        // Ignore the exit of a child this turn never ran on (e.g. the one
+        // recycled while this turn's ensureStarted() spawned its replacement).
+        if (msg.params?.gen !== undefined && msg.params.gen !== turnGen) return
         push({ error: new Error(msg.params?.error || 'sidecar exited') })
         return
       }
@@ -513,6 +525,7 @@ export class AgentCoreTransport {
       }
     }
 
+    let turnGen
     const unsub = this.onEvent(onEvt)
     const onAbort = () => {
       aborted = true
@@ -524,6 +537,7 @@ export class AgentCoreTransport {
     const startPromise = (async () => {
       try {
         await this.ensureStarted()
+        turnGen = this._bufGeneration
         turn.mark?.('agentcore-start')
         const tools = normalizeTools(turn.tools ?? options?.tools)
         const model = turn.model || buildModelSpec(options, turn.overrides)
@@ -571,7 +585,7 @@ export class AgentCoreTransport {
       const reason = aborted || signal?.aborted
         ? { kind: 'aborted', failure: { message: 'aborted', code: 'ABORTED' } }
         : turnError
-          ? { kind: 'error', failure: { message: redactSecrets(String(turnError.message || turnError)), code: turnError.code || 'AGENTCORE' } }
+          ? { kind: 'error', failure: { message: redactSecrets(String(turnError.message || turnError)), code: failureCode(turnError.code) } }
           : { kind: 'stop' }
       if (usage && this.emitUsage && reason.kind === 'stop') {
         yield { type: 'usage', usage }
@@ -749,3 +763,14 @@ function lastUserText(options) {
 }
 
 export default AgentCoreTransport
+
+/**
+ * dsh LlmError needs a non-empty string code; sidecar/openjiuwen codes can be
+ * numeric (e.g. 181001), which made dsh replace the real failure message
+ * (quota, auth, ...) with "LlmError code must be a non-empty string".
+ */
+export function failureCode(code) {
+  if (typeof code === 'string' && code.trim()) return code
+  if (typeof code === 'number' && Number.isFinite(code)) return `AGENTCORE_${code}`
+  return 'AGENTCORE'
+}

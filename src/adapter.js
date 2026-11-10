@@ -9,6 +9,7 @@
  */
 
 import { resolveAgentCoreModel } from './jiuwen-env.js'
+import { findCatalogModel, isModelAlias, pickerModels, usesRealModelPicker } from './picker-models.js'
 import { OpenAiTransport } from './openai-transport.js'
 import { GatewayTransport } from './gateway-transport.js'
 import { AgentCoreTransport } from './agentcore-transport.js'
@@ -153,12 +154,26 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
 
     async listModels(provider) {
       const cfg = this._cfg()
-      const own = cfg.models.map(m => ({
+      // agent-core: list the real model names from Settings → Models (not the
+      // legacy jiuwen-default / jiuwen-swarm aliases). Gateway keeps its catalog.
+      const realPicker = usesRealModelPicker(cfg)
+      const base = realPicker ? pickerModels(cfg) : cfg.models
+      const own = base.map(m => ({
         provider,
         id: m.id,
         name: m.name,
         inputModalities: ['text', 'image'],
       }))
+      if (realPicker) {
+        // Keep a legacy default (e.g. agent-default-model → jiuwen-default)
+        // routable in the GUI until the user picks a real model.
+        let sel
+        try { sel = deps.hostDefaultModel?.() } catch { sel = undefined }
+        if (sel?.provider === provider && isModelAlias(sel.model) && !own.some(m => m.id === sel.model)) {
+          const target = resolveAgentCoreModel(cfg, { model: sel.model }).model
+          own.push({ provider, id: String(sel.model), name: `${target} (default)`, inputModalities: ['text', 'image'] })
+        }
+      }
       if (!cfg.modelDiscovery || typeof deps.discoverModels !== 'function') return own
       let found = []
       try { found = await deps.discoverModels() } catch { found = [] }
@@ -168,11 +183,18 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
 
     resolveModel(provider, model) {
       const cfg = this._cfg()
-      const hit = cfg.models.find(m => m.id === model)
+      const hit = findCatalogModel(cfg, model)
+      const realPicker = usesRealModelPicker(cfg)
+      const listed = realPicker ? pickerModels(cfg).find(m => m.id === model) : undefined
+      const name = listed?.name
+        || (realPicker && isModelAlias(model) ? resolveAgentCoreModel(cfg, { model }).model : undefined)
+        || (realPicker && hit && !isModelAlias(hit.id) ? hit.name : undefined)
+        || (!realPicker ? hit?.name : undefined)
+        || model
       return Promise.resolve({
         provider,
         id: model,
-        name: hit?.name || model,
+        name,
         inputModalities: ['text', 'image'],
         ...(hit?.contextWindow ? { context: { contextWindow: hit.contextWindow } } : {}),
         ...(hit?.maxTokens ? { defaultMaxTokens: hit.maxTokens } : {}),
@@ -244,7 +266,7 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
           // win over mapping; mapping wins over bare plugin defaults when those fields were only filled from cfg.
           {
             const req = options?.providerOptions?.jiuwen || options?.metadata?.jiuwen || options?.jiuwen || {}
-            const catalog = cfg.models.find(m => m.id === options?.model)
+            const catalog = findCatalogModel(cfg, options?.model)
             if (!req.chatMode && !catalog?.chatMode && mapping.chatMode) overrides.chatMode = mapping.chatMode
             if (req.skills === undefined && mapping.skills) overrides.skills = mapping.skills
             if (!req.agentTemplateName && !catalog?.agentTemplateName && mapping.agentTemplateName) {
@@ -263,7 +285,7 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
             const so = matchSessionOverride(cfg.sessionOverrides, dshSessionId, profile)
             if (so) {
               const req = options?.providerOptions?.jiuwen || options?.metadata?.jiuwen || options?.jiuwen || {}
-              const catalog = cfg.models.find(m => m.id === options?.model)
+              const catalog = findCatalogModel(cfg, options?.model)
               const explicit = (k) => req[k] !== undefined || catalog?.[k] !== undefined || mapping[k] !== undefined
               if (so.modelName && !explicit('modelName') && !(cfg.forwardModelName && options?.model && !catalog) && !(cfg.discoveryPrefix && String(options?.model || '').startsWith(cfg.discoveryPrefix))) overrides.modelName = so.modelName
               if (so.chatMode && !explicit('chatMode')) overrides.chatMode = so.chatMode
@@ -450,7 +472,7 @@ export function createJiuwenAdapter(LlmAdapterBase, deps) {
  */
 export function turnOverrides(cfg, options) {
   const req = options?.providerOptions?.jiuwen || options?.metadata?.jiuwen || options?.jiuwen || {}
-  const model = cfg.models.find(m => m.id === options?.model)
+  const model = findCatalogModel(cfg, options?.model)
   let modelName = req.modelName ?? model?.modelName
   if (modelName === undefined && cfg.forwardModelName && options?.model && !model) modelName = options.model
   // modelDiscovery ids: `<discoveryPrefix><model_name>` → model_name

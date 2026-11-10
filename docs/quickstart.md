@@ -16,8 +16,8 @@ dsh --profile web
 ## Configure the model in the dsh UI
 
 1. Open **Settings → Models**.
-2. Find **JiuwenSwarm** and enter the API key, the OpenAI-compatible endpoint (for example `https://api.example.com/v1`), and the model ids you want in the picker. The id is what agent-core sends to the endpoint; if you keep a catalog alias such as `jiuwen-default`, fill in its API name too.
-3. In the composer, pick that Jiuwen model, or set it as the default. New turns use the selection; a turn already in flight keeps the model it started with.
+2. Find **JiuwenSwarm** and enter the API key, the OpenAI-compatible endpoint (for example `https://api.example.com/v1`), and the model names your endpoint expects (for example `doubao-seed-2.0-mini`).
+3. In the composer model picker, pick one of those models under JiuwenSwarm, or set it as the default. New turns use the selection; a turn already in flight keeps the model it started with.
 
 The key is stored write-only by dsh credentials — not in `cordis.patch.yml`. Switching the model or endpoint in the UI takes effect on the next turn.
 

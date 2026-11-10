@@ -5,9 +5,13 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased — model settings in the dsh UI
 
+- The model picker lists the real model names from **Settings → Models** under JiuwenSwarm (agent-core backend) instead of `jiuwen-default` / `jiuwen-swarm`; selecting one sends exactly that model to agent-core. Legacy alias selections still resolve to the configured (or env) model. The Models card now takes plain model names. `backend: gateway` is unchanged.
 - The Jiuwen provider is configured in **Settings → Models** (API key, endpoint, model list). Pick the model in the composer, or set it as the default. You no longer need to edit `cordis.patch.yml` or export `AGENTCORE_MODEL` / `AGENTCORE_API_BASE` just to choose a model.
 - A concrete UI selection, and a catalog `modelName` on an alias, win over env / `~/.jiuwenswarm/config/.env`. Env and dotenv remain fallbacks for headless use and for unresolved aliases. The API key is stored write-only in dsh credentials when set in the UI.
 - The adapter registers as a dsh configurable provider and ships a small web client card (`lib/client.js`) because the built-in Models editor only has layouts for DeepSeek and pi-ai.
+- Fixed in a live dsh 0.2.2-rc.1 web session: the plugin config schema no longer nests volatile fields under `intersect` (dsh rejected it and `llm-jiuwen` never activated); the Models provider/settings registration keeps its service receiver; the client build no longer drops the `react` import (the card crashed with `h is not defined`).
+- Agent-core host tool callbacks use dsh 0.2.2's batch `tools.execute` shape (bare single calls failed with `Tool batch execution failed`), still accepted by older hosts. Turn failures always carry a string code, so provider errors such as quota/429 reach the UI instead of `LlmError code must be a non-empty string`.
+- Saving a new API key in Settings → Models recycles the sidecar without failing the next turn (the old child's late exit used to close the new child's reader and fail the turn with `sidecar exited ... SIGTERM`).
 
 ## Unreleased — generic per-session context dedupe
 

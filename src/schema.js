@@ -32,7 +32,11 @@ function loadSchemastery() {
 
 /**
  * Build the settings-aware Config schema from a schemastery `Schema` export.
- * Extra keys are preserved (non-strict object validation + intersect merge).
+ * Extra keys are preserved by non-strict object validation.
+ *
+ * The volatile fields must sit on a plain top-level object: dsh's schemastery
+ * rejects volatile fields under an intersect/union/array ("volatile fields
+ * require a fixed object path"), which would stop the plugin from activating.
  */
 export function createSettingsConfig(Schema) {
   const z = Schema
@@ -46,15 +50,13 @@ export function createSettingsConfig(Schema) {
     agentTemplateName: z.string(),
     agentGroupName: z.string(),
   })
-  return z.intersect([
-    z.object({
-      displayName: z.string().volatile(),
-      baseURL: z.string().volatile(),
-      apiKeyEnv: z.string().role('credential-ref').default('JIUWEN_API_KEY').volatile(),
-      defaultModel: z.string().volatile(),
-      models: z.array(model).volatile(),
-    }),
-  ])
+  return z.object({
+    displayName: z.string().volatile(),
+    baseURL: z.string().volatile(),
+    apiKeyEnv: z.string().role('credential-ref').default('JIUWEN_API_KEY').volatile(),
+    defaultModel: z.string().volatile(),
+    models: z.array(model).volatile(),
+  })
 }
 
 function resolveExportedConfig() {

@@ -206,6 +206,8 @@ export function apply(ctx, config = {}) {
     // modelDiscovery (opt-in): Jiuwen models as unique `<discoveryPrefix><model_name>` catalog ids.
     discoverModels: () => (readConfig().modelDiscovery ? modelDiscovery.list() : Promise.resolve([])),
     resolveChildEnv: modelSettings.resolveChildEnv,
+    // Host default selection (dsh-agent-default-model), so a legacy alias default stays routable in the picker.
+    hostDefaultModel: () => service('agentDefaultModel')?.currentSelection?.(),
     // Optional host attachment store (generic Cordis service name `attachments`).
     attachments: () => {
       try { return (typeof ctx.get === 'function' ? ctx.get('attachments') : undefined) ?? ctx.attachments } catch { return undefined }
@@ -220,8 +222,13 @@ export function apply(ctx, config = {}) {
       const cleanArgs = stripNullishToolArgs(args)
       const runtime = tools && typeof tools.execute === 'function' ? tools : (agent?.ctx?.tools && typeof agent.ctx.tools.execute === 'function' ? agent.ctx.tools : null)
       if (runtime) {
+        const callId = info.callId || `ac-${Date.now()}`
+        // dsh >=0.2.2 `tools.execute` takes a batch ({ calls: [block] }) and
+        // returns { results: [{ callId, result }] }; older hosts take one exec.
+        // Send both shapes; each host reads only its own keys.
         const exec = {
-          callId: info.callId || `ac-${Date.now()}`,
+          calls: [{ id: callId, name, arguments: JSON.stringify(cleanArgs ?? {}) }],
+          callId,
           name,
           arguments: cleanArgs,
           agent,
@@ -231,7 +238,7 @@ export function apply(ctx, config = {}) {
         // like Gateway MCP callbacks. Preserve native dsh initiator semantics.
         const run = () => runtime.execute(exec)
         const live = agent && typeof agents?.withInitiator === 'function' && agents.get?.(agent.id) === agent
-        const result = await (live ? agents.withInitiator(agent, run) : run())
+        const result = unwrapToolBatch(await (live ? agents.withInitiator(agent, run) : run()), callId)
         if (result?.isError) {
           const err = new Error(toolResultText(result) || `tool ${name} failed`)
           err.isError = true
@@ -604,3 +611,9 @@ function toolResultText(result) {
   return undefined
 }
 
+/** Single result from a dsh batch settlement ({ results: [{ callId, result }] }); other shapes pass through. */
+export function unwrapToolBatch(out, callId) {
+  if (!out || typeof out !== 'object' || !Array.isArray(out.results)) return out
+  const hit = out.results.find(r => r && r.callId === callId) || out.results[0]
+  return hit && typeof hit === 'object' && 'result' in hit ? hit.result : hit
+}

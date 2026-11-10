@@ -11,7 +11,10 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 let logic = readFileSync(join(ROOT, 'client/form-logic.js'), 'utf8')
 logic = logic.replace(/^export const /gm, 'const ').replace(/^export function /gm, 'function ')
 let body = readFileSync(join(ROOT, 'client/index.cjs'), 'utf8')
-body = body.replace(/const \{[\s\S]*?\} = require\('\.\/form-logic\.js'\)\n\n/, '')
+// Drop only the form-logic import (inlined above). `[^}]` keeps the match from
+// starting at the earlier `require('react')` destructure and deleting it.
+body = body.replace(/^const \{[^}]*\} = require\('\.\/form-logic\.js'\)\n\n/m, '')
+if (!body.includes("require('react')")) throw new Error('client build dropped the react import')
 const indented = (logic + '\n' + body).split('\n').map(l => l ? `\t\t${l}` : l).join('\n')
 const wrapped = `window.__ModuleLoader__.load({
 \tid: "@dsh-jiuwen/adapter",
