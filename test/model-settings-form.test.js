@@ -62,6 +62,7 @@ test('shipped client bundle is a ModuleLoader factory for this package', () => {
   assert.match(src, /id:\s*"@dsh-jiuwen\/adapter"/)
   assert.match(src, /settings\.models\.provider-card/)
   assert.match(src, /exports\.apply|module\.exports/)
+  assert.match(src, /hideHostGenericEditor|watchHostGenericEditor/)
   assert.doesNotMatch(src, /sk-[A-Za-z0-9]{8,}/)
 })
 
@@ -76,6 +77,7 @@ test('shipped client bundle renders the Models card (react import survives the b
     createElement: (type, props, ...children) => { calls.push(type); return { type, props, children } },
     useState: (v) => [v, () => {}],
     useEffect: () => {},
+    useRef: () => ({ current: null }),
   }
   const mod = factory((id) => { if (id === 'react') return react; throw new Error('unexpected require ' + id) })
   let card

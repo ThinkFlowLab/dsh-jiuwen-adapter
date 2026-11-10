@@ -32,6 +32,8 @@ import { JIUWEN_EVENT, JIUWEN_TYPED_EVENTS } from './typed-events.js'
 import { typedEventFor, installSessionSync, createPlanBridge, createModelDiscovery } from './bridges.js'
 import { installHostSync } from './host-sync.js'
 import { installHostModelSettings } from './host-model-settings.js'
+import { hostToolExec, unwrapToolBatch, stripNullishToolArgs, toolResultText } from './tool-exec.js'
+export { unwrapToolBatch }
 export { JIUWEN_EVENT, JIUWEN_TYPED_EVENTS }
 // Only `llm` is required. agents/tools/approval are resolved lazily per call via service() (ctx.get),
 // so hosts without them (plain Cordis + dsh-llm) still load the provider; Cordis has no optional
@@ -223,17 +225,8 @@ export function apply(ctx, config = {}) {
       const runtime = tools && typeof tools.execute === 'function' ? tools : (agent?.ctx?.tools && typeof agent.ctx.tools.execute === 'function' ? agent.ctx.tools : null)
       if (runtime) {
         const callId = info.callId || `ac-${Date.now()}`
-        // dsh >=0.2.2 `tools.execute` takes a batch ({ calls: [block] }) and
-        // returns { results: [{ callId, result }] }; older hosts take one exec.
-        // Send both shapes; each host reads only its own keys.
-        const exec = {
-          calls: [{ id: callId, name, arguments: JSON.stringify(cleanArgs ?? {}) }],
-          callId,
-          name,
-          arguments: cleanArgs,
-          agent,
-          signal: info.signal,
-        }
+        // dsh >=0.2.2 batch + older single-exec; see hostToolExec.
+        const exec = hostToolExec({ callId, name, args: cleanArgs, agent, signal: info.signal })
         // NDJSON callbacks run outside the agent driver's async context, just
         // like Gateway MCP callbacks. Preserve native dsh initiator semantics.
         const run = () => runtime.execute(exec)
@@ -586,34 +579,3 @@ export function hasQuestionAnswerer(ctx) {
   } catch { return true }
 }
 
-/** Drop null/undefined tool args (openjiuwen fills optionals with null; dsh rejects). */
-function stripNullishToolArgs(args) {
-  if (!args || typeof args !== 'object' || Array.isArray(args)) return args && typeof args === 'object' ? args : {}
-  const out = {}
-  for (const [k, v] of Object.entries(args)) {
-    if (v === null || v === undefined) continue
-    out[k] = v
-  }
-  return out
-}
-
-/** dsh tool results use content[].text (and sometimes error.message), not top-level .text. */
-function toolResultText(result) {
-  if (!result || typeof result !== 'object') return undefined
-  if (typeof result.text === 'string' && result.text) return result.text
-  if (typeof result.error?.message === 'string' && result.error.message) return result.error.message
-  if (Array.isArray(result.content)) {
-    const parts = result.content
-      .filter((b) => b && b.type === 'text' && typeof b.text === 'string')
-      .map((b) => b.text)
-    if (parts.length) return parts.join('\n')
-  }
-  return undefined
-}
-
-/** Single result from a dsh batch settlement ({ results: [{ callId, result }] }); other shapes pass through. */
-export function unwrapToolBatch(out, callId) {
-  if (!out || typeof out !== 'object' || !Array.isArray(out.results)) return out
-  const hit = out.results.find(r => r && r.callId === callId) || out.results[0]
-  return hit && typeof hit === 'object' && 'result' in hit ? hit.result : hit
-}

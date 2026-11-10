@@ -1,8 +1,9 @@
-const { createElement: h, useEffect, useState } = require('react')
+const { createElement: h, useEffect, useRef, useState } = require('react')
 const {
   SETTINGS_NS, DEFAULT_API_KEY_ENV,
   modelsFromValue, defaultFromValue, modelsForSave, validateModels, pathOpsForDraft, namespaceValue,
 } = require('./form-logic.js')
+const { watchHostGenericEditor } = require('./host-editor-hide.js')
 
 const inject = ['slots', 'remote', 'remote.credentials', 'remote.settings']
 
@@ -30,6 +31,9 @@ function JiuwenModelsCard(props) {
   const [keyConfigured, setKeyConfigured] = useState(false)
   const [models, setModels] = useState([emptyModel()])
   const [writable, setWritable] = useState(true)
+  const rootRef = useRef(null)
+
+  useEffect(() => watchHostGenericEditor(rootRef.current), [])
 
   async function load() {
     if (!ctx?.remote?.settings?.describe) {
@@ -112,7 +116,7 @@ function JiuwenModelsCard(props) {
   const inputStyle = { width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: 6, border: '1px solid color-mix(in srgb, currentColor 20%, transparent)', background: 'transparent', color: 'inherit' }
   const rowStyle = { display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: 6, marginBottom: 6, alignItems: 'center' }
 
-  return h('div', { style: { marginTop: 8, padding: '8px 0 4px' } },
+  return h('div', { ref: rootRef, 'data-jiuwen-models-card': '', style: { marginTop: 8, padding: '8px 0 4px' } },
     h('p', { style: { margin: '0 0 8px', fontSize: 13, lineHeight: 1.45 } },
       copy(
         'Set the endpoint, API key and model names here. Each model then shows up by name in the composer model picker. Changes apply on the next turn.',

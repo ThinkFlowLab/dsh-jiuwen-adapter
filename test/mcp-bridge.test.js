@@ -285,6 +285,31 @@ test('host (default): passthrough goes through tools.execute; no adapter approva
   assert.equal(ex.name, 'write'); assert.equal(ex.agent, agent); assert.deepEqual(ex.arguments, { path: 'a.txt' })
   assert.match(ex.callId, /^jiuwen-[0-9a-f-]{36}$/)
   assert.ok(ex.signal instanceof AbortSignal && !ex.signal.aborted)
+  assert.ok(Array.isArray(ex.calls) && ex.calls.length === 1, 'batch calls present for dsh 0.2.2')
+  assert.equal(ex.calls[0].id, ex.callId)
+  assert.equal(ex.calls[0].name, 'write')
+  assert.deepEqual(JSON.parse(ex.calls[0].arguments), { path: 'a.txt' })
+  await b.dispose()
+})
+
+test('host (contract, not live): dsh 0.2.2 batch-only tools.execute unwraps; bare single exec is not required', async () => {
+  // Isolated contract test: a 0.2.2-shaped runtime that only reads input.calls
+  // and returns { results: [{ callId, result }] }. This is not a live Gateway run.
+  const agent = { id: 's1' }
+  const rt = hostRuntime((exec) => {
+    if (!Array.isArray(exec.calls) || !exec.calls[0]) throw new Error('Tool batch execution failed')
+    const block = exec.calls[0]
+    return {
+      results: [{ callId: block.id, result: { content: [{ type: 'text', text: `batch ${block.name} ${block.arguments}` }] } }],
+      additionalContexts: [],
+      concluded: false,
+    }
+  })
+  const { b } = bridge({ tools: rt, agents: { get: () => agent } }, { toolApproval: 'host', toolAllowlist: ['*'] })
+  await b.prepare([...schemas, { name: 'write', description: 'w' }], 's1')
+  const r = await b._handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'write', arguments: { path: 'a.txt' } } }, 's1')
+  assert.equal(r.result.isError, false, r.result.content?.[0]?.text)
+  assert.equal(r.result.content[0].text, 'batch write {"path":"a.txt"}')
   await b.dispose()
 })
 

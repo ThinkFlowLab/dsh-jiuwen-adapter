@@ -27,6 +27,7 @@ import { join, dirname } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { redactSecrets } from './redact.js'
+import { hostToolExec, unwrapToolBatch } from './tool-exec.js'
 
 export const PROXY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'jiuwen-mcp-proxy.mjs')
 const readJson = (f, d) => { try { return JSON.parse(readFileSync(f, 'utf8')) } catch { return d } }
@@ -228,14 +229,16 @@ export function createMcpBridge({ config, services, rpc, logger }) {
       const cap = callCapMs(c)
       const t = cap ? setTimeout(fused.abort, cap) : undefined
       try {
-        const exec = { callId: `jiuwen-${randomUUID()}`, name, arguments: args ?? {}, agent, signal: fused.signal }
+        // dsh >=0.2.2 batch + older single-exec (same payload as agent-core).
+        const callId = `jiuwen-${randomUUID()}`
+        const exec = hostToolExec({ callId, name, args: args ?? {}, agent, signal: fused.signal })
         // The call arrives on the proxy socket, outside the agent driver's async context. Re-enter that
         // context for the exact live agent (as a native call runs), so tools that authenticate their
         // caller through ctx.agents.currentInitiator() (dsh-tool-goal's create_goal / update_goal /
         // get_goal: GOAL_TOOL_DRIVER_REQUIRED) see the same agent a native call would.
         const run = () => runtime.execute(exec)
         const live = typeof agents?.withInitiator === 'function' && agents.get?.(sessionId) === agent
-        const result = await (live ? agents.withInitiator(agent, run) : run())
+        const result = unwrapToolBatch(await (live ? agents.withInitiator(agent, run) : run()), callId)
         return { isError: Boolean(result?.isError), text: finish(toText(result)) }
       } catch (error) {
         return { isError: true, text: `dsh tool ${name} failed: ${error?.message || error}` }
