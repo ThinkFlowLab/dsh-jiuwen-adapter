@@ -11,6 +11,7 @@ All notable changes to this project are documented here. The format follows
 - The adapter registers as a dsh configurable provider and ships a small web client card (`lib/client.js`) because the built-in Models editor only has layouts for DeepSeek and pi-ai.
 - Fixed in a live dsh 0.2.2-rc.1 web session: the plugin config schema no longer nests volatile fields under `intersect` (dsh rejected it and `llm-jiuwen` never activated); the Models provider/settings registration keeps its service receiver; the client build no longer drops the `react` import (the card crashed with `h is not defined`).
 - Agent-core host tool callbacks use dsh 0.2.2's batch `tools.execute` shape (bare single calls failed with `Tool batch execution failed`), still accepted by older hosts. Turn failures always carry a string code, so provider errors such as quota/429 reach the UI instead of `LlmError code must be a non-empty string`.
+- Saving a new API key in Settings → Models recycles the sidecar without failing the next turn (the old child's late exit used to close the new child's reader and fail the turn with `sidecar exited ... SIGTERM`).
 
 ## Unreleased — generic per-session context dedupe
 
